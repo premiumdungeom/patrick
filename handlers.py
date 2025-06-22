@@ -75,22 +75,10 @@ def admin(update: Update, context: CallbackContext):
     if user_id not in ADMINS:
         update.message.reply_text("❌ You are not an admin.")
         return
-    context.bot.send_message(
-        chat_id=update.effective_chat.id,
-        text="💘 Admin Panel",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Open Admin Panel", callback_data="admin_panel")]])
-    )
+    update.message.reply_text("💘 Admin Panel", reply_markup=admin_panel_keyboard())
 
 def show_main_menu(update: Update, context: CallbackContext, edit=False):
-    if not hasattr(update, "callback_query") or not edit:
-        update.message.reply_text("🏠 Main Menu", reply_markup=main_menu())
-    else:
-        context.bot.edit_message_text(
-            chat_id=update.effective_chat.id,
-            message_id=update.callback_query.message.message_id,
-            text="🏠 Main Menu",
-            reply_markup=main_menu()
-        )
+    update.message.reply_text("🏠 Main Menu", reply_markup=main_menu())
 
 def check_subscription(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
@@ -253,18 +241,11 @@ def notifications(update: Update, context: CallbackContext):
         update.message.reply_text("🔔 Notifications turned ON.")
 
 def admin_panel(update: Update, context: CallbackContext, edit=False):
+    # Not needed! Kept for compatibility if you ever use inline again.
     if update.effective_user.id not in ADMINS:
         return
     txt = "💘 Admin Panel"
-    if hasattr(update, "callback_query") and edit:
-        context.bot.edit_message_text(
-            chat_id=update.effective_chat.id,
-            message_id=update.callback_query.message.message_id,
-            text=txt,
-            reply_markup=admin_panel_keyboard()
-        )
-    else:
-        update.message.reply_text(txt, reply_markup=admin_panel_keyboard())
+    update.message.reply_text(txt, reply_markup=admin_panel_keyboard())
 
 def airdrop_ptrst_init(update: Update, context: CallbackContext):
     update.message.reply_text("Enter amount of $PTRST to airdrop to all users:")
@@ -465,24 +446,9 @@ def main_menu_router(update: Update, context: CallbackContext):
         return handle_captcha(update, context)
     update.message.reply_text("❓ Unrecognized command. Please use the menu.")
 
-def inline_callback_handler(update: Update, context: CallbackContext):
-    query = update.callback_query
-    data = query.data
-    user_id = query.from_user.id
-    if data == "admin_panel":
-        if user_id in ADMINS:
-            admin_panel(update, context, edit=True)
-        else:
-            query.answer("You are not an admin.", show_alert=True)
-    elif data == "check_subscription":
-        check_subscription(update, context)
-    else:
-        query.answer("Unknown action.")
-
 def register_handlers(dispatcher):
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("admin", admin))
-    dispatcher.add_handler(CallbackQueryHandler(inline_callback_handler))
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, main_menu_router))
 
 def add_tx(user_id, tx_type, amount, desc):
