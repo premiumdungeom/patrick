@@ -3,7 +3,7 @@
 # Admin user IDs
 ADMINS = [5650788149, 548105255]
 
-TOKEN = "7770915787:AAE-Y2YdwCCqWDzgF7QnyqaMi9sxRq73o_U"
+TOKEN = "8186651135:AAEq_xB2dzdxMpPIGJljdLHmsBh9oXqWDZc"
 
 # Cooldowns (in seconds)
 PTRST_COOLDOWN = 30 * 60       # 30 minutes cooldown for $PTRST bonus
