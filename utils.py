@@ -2,6 +2,8 @@
 
 import json, os, time
 from datetime import datetime
+from telegram import ChatMember
+from config import REQUIRED_CHANNELS
 from config import REFERRAL_REWARDS, PTRST_COOLDOWN, TON_COOLDOWN
 
 USERS_FILE = "users.json"
@@ -93,6 +95,18 @@ def deduct_balance(user_id, token_type, amount):
         elif token_type == "ton":
             users[str(user_id)]["balance_ton"] -= float(amount)
         save_users(users)
+
+def check_subscription(bot, user_id):
+    # Check subscription for only the required channel (gouglenetwork)
+    channel = REQUIRED_CHANNELS[0]  # Get the first (and only) channel in the list
+    try:
+        member = bot.get_chat_member(f"@{channel}", user_id)
+        # Check if the user is a member, admin, or owner
+        if member.status not in [ChatMember.MEMBER, ChatMember.OWNER, ChatMember.ADMINISTRATOR]:
+            return False  # User is not subscribed
+    except:
+        return False  # Channel not found or error
+    return True  # User is subscribed
 
 def format_time(seconds):
     mins, secs = divmod(seconds, 60)
