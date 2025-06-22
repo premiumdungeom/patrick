@@ -54,7 +54,7 @@ def start(update: Update, context: CallbackContext):
 # Subscription check and captcha
 def check_subscription(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    chat_member = context.bot.get_chat_member("@combohamsterdaily", user_id)
+    chat_member = context.bot.get_chat_member("@gouglenetwork", user_id)
 
     if chat_member.status in ["member", "administrator", "creator"]:
         a, b = random.randint(1, 9), random.randint(1, 9)
