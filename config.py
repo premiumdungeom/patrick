@@ -5,6 +5,8 @@ ADMINS = [5650788149, 548105255]
 
 TOKEN = "8186651135:AAEq_xB2dzdxMpPIGJljdLHmsBh9oXqWDZc"
 
+WEBHOOK_URL = "https://patrickeded.onrender.com"
+
 # Cooldowns (in seconds)
 PTRST_COOLDOWN = 30 * 60       # 30 minutes cooldown for $PTRST bonus
 TON_COOLDOWN = 8 * 60 * 60     # 8 hours cooldown for TON bonus
