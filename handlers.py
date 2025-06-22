@@ -13,7 +13,8 @@ from datetime import datetime
 ADMINS = [5650788149, 8108410868]
 
 captcha_store = {}
-pending_withdrawals = {}
+pending_withdrawals = {}  # withdrawal_id -> dict
+pending_rejections = {}   # admin_id -> withdrawal_id
 wallet_input_mode = set()
 ptrst_withdraw_mode = {}
 ton_withdraw_mode = {}
@@ -81,7 +82,9 @@ def show_main_menu(update: Update, context: CallbackContext, edit=False):
     update.message.reply_text("🏠 Main Menu", reply_markup=main_menu())
 
 def check_subscription(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
+    query = update.callback_query
+    user_id = query.from_user.id
+    query.answer()  # Remove Telegram's loading spinner!
     chat_member = context.bot.get_chat_member("@gouglenetwork", user_id)
     if chat_member.status in ["member", "administrator", "creator"]:
         a, b = random.randint(1, 9), random.randint(1, 9)
@@ -240,13 +243,6 @@ def notifications(update: Update, context: CallbackContext):
         reminder_opt_in.add(user_id)
         update.message.reply_text("🔔 Notifications turned ON.")
 
-def admin_panel(update: Update, context: CallbackContext, edit=False):
-    # Not needed! Kept for compatibility if you ever use inline again.
-    if update.effective_user.id not in ADMINS:
-        return
-    txt = "💘 Admin Panel"
-    update.message.reply_text(txt, reply_markup=admin_panel_keyboard())
-
 def airdrop_ptrst_init(update: Update, context: CallbackContext):
     update.message.reply_text("Enter amount of $PTRST to airdrop to all users:")
     context.user_data["airdrop_ptrst"] = True
@@ -287,7 +283,11 @@ def airdrop_ptrst_message(update: Update, context: CallbackContext):
 def withdraw_request(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     txt = update.message.text
+    token = None
+
+    # Check which mode
     if user_id in ptrst_withdraw_mode:
+        token = "PTRST"
         try:
             amount = int(txt)
         except ValueError:
@@ -301,14 +301,10 @@ def withdraw_request(update: Update, context: CallbackContext):
             update.message.reply_text("❌ Not enough balance")
             return
         deduct_balance(user_id, "ptrst", amount)
-        update_total_payout("ptrst", amount)
-        add_tx(user_id, "Withdraw", -amount, "PTRST Withdraw requested")
-        msg = f"💵 Withdraw Order Submitted\n━━━━━━━━━━━━━━━━━━━━\nAmount: {amount} $PTRST\nWallet: {user['wallet']}\nTime: {get_datetime()}"
-        for admin in ADMINS:
-            context.bot.send_message(admin, f"New $PTRST withdraw:\n{msg}")
-        update.message.reply_text(f"{msg}\nWait for approval.")
+        # remove mode
         del ptrst_withdraw_mode[user_id]
     elif user_id in ton_withdraw_mode:
+        token = "TON"
         try:
             amount = float(txt)
         except ValueError:
@@ -322,13 +318,85 @@ def withdraw_request(update: Update, context: CallbackContext):
             update.message.reply_text("❌ Not enough balance")
             return
         deduct_balance(user_id, "ton", amount)
-        update_total_payout("ton", amount)
-        add_tx(user_id, "Withdraw", -amount, "TON Withdraw requested")
-        msg = f"💎 TON Withdraw Request\n━━━━━━━━━━━━━━━━━━━━\nAmount: {amount}\nWallet: {user['wallet']}\nTime: {get_datetime()}"
-        for admin in ADMINS:
-            context.bot.send_message(admin, f"New TON withdraw:\n{msg}")
-        update.message.reply_text(f"{msg}\nWait for approval.")
         del ton_withdraw_mode[user_id]
+    else:
+        return
+
+    withdrawal_id = f"{user_id}_{int(datetime.now().timestamp())}_{token}"
+    user = get_user(user_id)
+    pending_withdrawals[withdrawal_id] = {
+        "user_id": user_id,
+        "amount": amount,
+        "wallet": user["wallet"],
+        "token": token,
+    }
+
+    add_tx(user_id, "Withdraw", -amount, f"{token} Withdraw requested")
+
+    withdraw_msg = (
+        f"💵 Withdraw Order Submitted\n━━━━━━━━━━━━━━━━━━━━\n"
+        f"User: @{user.get('username', user_id)}\n"
+        f"Amount: {amount} {token}\nWallet: {user['wallet']}\nTime: {get_datetime()}\n"
+        f"UserID: {user_id}\nWithdrawalID: {withdrawal_id}"
+    )
+    inline_keyboard = [
+        [
+            InlineKeyboardButton("✅ Accept", callback_data=f"wd_accept_{withdrawal_id}"),
+            InlineKeyboardButton("❌ Reject", callback_data=f"wd_reject_{withdrawal_id}")
+        ]
+    ]
+    for admin in ADMINS:
+        context.bot.send_message(admin, withdraw_msg, reply_markup=InlineKeyboardMarkup(inline_keyboard))
+    update.message.reply_text(f"{withdraw_msg}\nWait for approval.")
+
+def inline_callback_handler(update: Update, context: CallbackContext):
+    query = update.callback_query
+    data = query.data
+    admin_id = query.from_user.id
+
+    if data == "check_subscription":
+        check_subscription(update, context)
+        return
+
+    if data.startswith("wd_accept_"):
+        withdrawal_id = data[len("wd_accept_"):]
+        wd = pending_withdrawals.pop(withdrawal_id, None)
+        if wd:
+            user_id = wd["user_id"]
+            amount = wd["amount"]
+            token = wd["token"]
+            context.bot.send_message(user_id, f"✅ Your withdrawal of {amount} {token} has been approved by admin.")
+            query.edit_message_text(f"✅ Withdrawal accepted and user notified.")
+        else:
+            query.answer("Already processed or not found.", show_alert=True)
+    elif data.startswith("wd_reject_"):
+        withdrawal_id = data[len("wd_reject_"):]
+        if withdrawal_id in pending_withdrawals:
+            pending_rejections[admin_id] = withdrawal_id
+            query.message.reply_text("Please type the reason for rejection:", reply_markup=ReplyKeyboardMarkup([["🚫 Cancel"]], resize_keyboard=True))
+            query.edit_message_text("Please reply with the rejection reason!")
+        else:
+            query.answer("Already processed or not found.", show_alert=True)
+
+def process_rejection_reason(update: Update, context: CallbackContext):
+    admin_id = update.effective_user.id
+    if admin_id in pending_rejections:
+        reason = update.message.text
+        withdrawal_id = pending_rejections.pop(admin_id)
+        wd = pending_withdrawals.pop(withdrawal_id, None)
+        if wd:
+            user_id = wd["user_id"]
+            amount = wd["amount"]
+            token = wd["token"]
+            # Refund
+            if token == "PTRST":
+                update_balance(user_id, "ptrst", amount)
+            elif token == "TON":
+                update_balance(user_id, "ton", amount)
+            context.bot.send_message(user_id, f"❌ Your withdrawal was rejected.\nReason: {reason}\nBalance returned.")
+            update.message.reply_text("User notified and balance restored.")
+        else:
+            update.message.reply_text("Withdrawal not found.")
 
 def trigger_withdraw(update: Update, context: CallbackContext):
     txt = update.message.text
@@ -449,7 +517,9 @@ def main_menu_router(update: Update, context: CallbackContext):
 def register_handlers(dispatcher):
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("admin", admin))
+    dispatcher.add_handler(CallbackQueryHandler(inline_callback_handler))
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, main_menu_router))
+    dispatcher.add_handler(MessageHandler(Filters.text & Filters.user(user_id=ADMINS), process_rejection_reason))
 
 def add_tx(user_id, tx_type, amount, desc):
     user = get_user(user_id)
