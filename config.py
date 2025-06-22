@@ -8,7 +8,7 @@ TOKEN = "8186651135:AAEq_xB2dzdxMpPIGJljdLHmsBh9oXqWDZc"
 # Define only the required channel
 REQUIRED_CHANNELS = ["gouglenetwork"]
 
-CHANNEL_USERNAME = "gouglenetwork"  # no @ symbol
+CHANNEL_USERNAME = "@gouglenetwork"
 
 WEBHOOK_URL = "https://patrickeded.onrender.com"
 
