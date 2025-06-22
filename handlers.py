@@ -1,142 +1,122 @@
-from telegram import ReplyKeyboardMarkup, Update
-from telegram.ext import CallbackContext, CommandHandler, MessageHandler, Filters
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from config import ADMINS, CHANNEL_USERNAME, EMOJIS
-from utils import *
+from utils import create_user, get_user, check_subscription, update_balance, update_total_payout, get_total_payouts
 
-# Reply Keyboard
-main_menu = ReplyKeyboardMarkup([
-    ["🧠 New Task", "👤 Account"],
-    ["💰 $PTRST", "🪙 TON"],
-    ["👥 Friends", "🎁 Bonus"],
-    ["ℹ️ About", "💘 Admin Panel"]
-], resize_keyboard=True)
-
-# Start command
+# Handler for /start
 def start(update: Update, context: CallbackContext):
-    user = update.effective_user
-    user_id = user.id
-    username = user.username or "NoUsername"
-    args = context.args
-    referrer_id = args[0] if args else None
+    user_id = update.effective_user.id
+    username = update.effective_user.username
 
-    # Must Join Check
-    chat_member = context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
-    if chat_member.status not in ["member", "creator", "administrator"]:
-        update.message.reply_text(
-            f"🚨 You must join our channel first:\n👉 https://t.me/{CHANNEL_USERNAME[1:]}",
-            disable_web_page_preview=True
+    # Check subscription for gouglenetwork
+    if not check_subscription(user_id):
+        return update.message.reply_text(
+            "❌ You didn't join our all resources.\n\n"
+            "⚠️ Subscribe to all resources:\n"
+            "1️⃣ [Patrick Official](https://t.me/minohamsterdailys)\n"
+            "2️⃣ [Combo Hamster](https://t.me/gouglenetwork)\n"
+            "3️⃣ [AI Isaac](https://t.me/AIIsaac_bot/sponsor)\n"
+            "4️⃣ [AI Isaac BNB](https://t.me/aiisaac_bnb)\n\n"
+            "Then click below 👇"
         )
-        return
+    
+    user_data = get_user(user_id)
 
-    create_user(user_id, username, referrer_id)
+    if not user_data:
+        create_user(user_id, username)
+
+    keyboard = [
+        [KeyboardButton(EMOJIS["new_task"] + " New Task")],
+        [KeyboardButton(EMOJIS["account"] + " Account")],
+        [KeyboardButton(EMOJIS["ptrst"] + " $PTRST")],
+        [KeyboardButton(EMOJIS["friends"] + " Friends")],
+        [KeyboardButton(EMOJIS["bonus"] + " Bonus")],
+        [KeyboardButton(EMOJIS["ton"] + " TON")],
+        [KeyboardButton(EMOJIS["about"] + " About")],
+        [KeyboardButton(EMOJIS["admin_panel"] + " Admin Panel")],
+    ]
+
     update.message.reply_text(
-        f"👋 Welcome *{user.first_name}* to *Patricked Airdrop Bot*!\n\nUse the menu below to earn *$PTRST* and *TON*.",
-        reply_markup=main_menu,
-        parse_mode="Markdown"
+        "Welcome! 👋 Please choose an option below:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     )
 
-# Account handler
+# Handler for buttons (TON, About, Admin Panel)
+def handle_ton(update: Update, context: CallbackContext):
+    update.message.reply_text("⛏️ TON mining is under development. Stay tuned!")
+
+def handle_about(update: Update, context: CallbackContext):
+    update.message.reply_text("🛠️ This bot allows you to earn $PTRST and TON through tasks, referrals, and bonuses.")
+
+def handle_admin_panel(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    if user_id not in ADMINS:
+        return update.message.reply_text("❌ You are not an admin.")
+    
+    keyboard = [
+        [KeyboardButton(EMOJIS["pending_withdraw"] + " Pending Withdraw"), KeyboardButton(EMOJIS["total_user"] + " Total User")],
+        [KeyboardButton(EMOJIS["total_payout"] + " Total Payout"), KeyboardButton(EMOJIS["broadcast"] + " Broadcast")],
+        [KeyboardButton(EMOJIS["set_new_task"] + " Set New Task")]
+    ]
+    update.message.reply_text("💘 Admin Panel", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+
+# Handler for /account
 def account(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    data = get_user(user_id)
-    wallet = data.get("wallet") or "Not set"
-
-    msg = (
-        f"👤 *Your Account*\n"
-        f"🔹 Balance: {data['balance_ptrst']} $PTRST\n"
-        f"🔸 TON: {data['balance_ton']} TON\n"
-        f"👛 Wallet: `{wallet}`\n"
-        f"👥 Referrals: {len(data['referrals_lvl1'])} (L1), {len(data['referrals_lvl2'])} (L2)"
-    )
-    update.message.reply_text(msg, parse_mode="Markdown")
-
-# TON claim
-def claim_ton(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
     user_data = get_user(user_id)
-    cooldown = check_cooldown(user_data, "ton")
 
-    if cooldown > 0:
-        return update.message.reply_text(f"⏳ Wait {format_time(cooldown)} before claiming TON again.")
+    if not user_data:
+        return update.message.reply_text("❌ User data not found. Please start again.")
+    
+    balance_ptrst = user_data["balance_ptrst"]
+    balance_ton = user_data["balance_ton"]
+    referrals_lvl1 = len(user_data["referrals_lvl1"])
+    referrals_lvl2 = len(user_data["referrals_lvl2"])
 
-    update_balance(user_id, "ton", 0.05)
-    update_claim_time(user_id, "ton")
-    update.message.reply_text("🪙 You claimed 0.05 TON!")
-
-# PTRST claim
-def claim_ptrst(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    user_data = get_user(user_id)
-    cooldown = check_cooldown(user_data, "ptrst")
-
-    if cooldown > 0:
-        return update.message.reply_text(f"⏳ Wait {format_time(cooldown)} before claiming $PTRST again.")
-
-    update_balance(user_id, "ptrst", 100)
-    update_claim_time(user_id, "ptrst")
-    update.message.reply_text("💰 You claimed 100 $PTRST!")
-
-# Friends / referrals
-def friends(update: Update, context: CallbackContext):
-    user = update.effective_user
-    data = get_user(user.id)
-    invite_link = f"https://t.me/{context.bot.username}?start={user.id}"
-
-    msg = (
-        f"👥 *Your Referral Stats*\n"
-        f"🔗 Invite Link: {invite_link}\n"
-        f"👤 Level 1: {len(data['referrals_lvl1'])} (150 $PTRST each)\n"
-        f"👥 Level 2: {len(data['referrals_lvl2'])} (75 $PTRST each)"
-    )
-    update.message.reply_text(msg, parse_mode="Markdown")
-
-# Bonus (same as PTRST claim)
-def bonus(update: Update, context: CallbackContext):
-    return claim_ptrst(update, context)
-
-# About
-def about(update: Update, context: CallbackContext):
     update.message.reply_text(
-        "ℹ️ *About Patricked Airdrop Bot*\n\n"
-        "Earn *$PTRST* and *TON* by referring friends, completing tasks, and claiming daily bonuses."
-        "\nWithdrawals processed manually by admin.",
-        parse_mode="Markdown"
+        f"💰 Your Account:\n\n"
+        f"🔹 $PTRST Balance: {balance_ptrst}\n"
+        f"🔹 TON Balance: {balance_ton} TON\n"
+        f"🔹 Level 1 Referrals: {referrals_lvl1}\n"
+        f"🔹 Level 2 Referrals: {referrals_lvl2}\n\n"
+        "Use the menu below to interact with the bot."
     )
 
-# Admin Panel
-def admin_panel(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    if str(user_id) not in ADMINS:
-        return update.message.reply_text("❌ You are not an admin.")
-
-    payouts = get_total_payouts()
-    users = load_users()
-    update.message.reply_text(
-        f"💘 *Admin Panel*\n\n"
-        f"👥 Total Users: {len(users)}\n"
-        f"💱 Total Payouts: {payouts['ptrst']} $PTRST, {payouts['ton']} TON",
-        parse_mode="Markdown"
-    )
-
-# Set New Task (admin only)
+# Handle new tasks
 def new_task(update: Update, context: CallbackContext):
+    update.message.reply_text("📝 New task description coming soon.")
+
+# Handle Bonus
+def bonus(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    if str(user_id) not in ADMINS:
-        return update.message.reply_text("❌ You are not an admin.")
+    user_data = get_user(user_id)
 
-    update.message.reply_text("📝 Send the new task text now.")
-    return
+    if not user_data:
+        return update.message.reply_text("❌ User data not found. Please start again.")
 
-# Main text dispatcher
+    # Simulate a bonus claim
+    balance_ptrst = user_data["balance_ptrst"] + 100  # Just an example of adding 100 $PTRST
+    update_balance(user_id, "ptrst", 100)
 
+    update.message.reply_text(f"🎁 You claimed 100 $PTRST. Your new balance: {balance_ptrst} $PTRST.")
+
+# Handle Friends
+def friends(update: Update, context: CallbackContext):
+    update.message.reply_text("👫 Share your referral link to earn rewards.")
+
+# Handle commands for all buttons
+def handle_unknown(update: Update, context: CallbackContext):
+    update.message.reply_text("❓ I didn't understand that. Please use the menu.")
+
+# Register all handlers
 def register_handlers(dp):
     dp.add_handler(CommandHandler("start", start))
-
-    dp.add_handler(MessageHandler(Filters.regex("(?i)new task"), new_task))
-    dp.add_handler(MessageHandler(Filters.regex("(?i)account"), account))
-    dp.add_handler(MessageHandler(Filters.regex("(?i)ton"), claim_ton))
-    dp.add_handler(MessageHandler(Filters.regex("(?i)\$ptrst"), claim_ptrst))
-    dp.add_handler(MessageHandler(Filters.regex("(?i)friends"), friends))
-    dp.add_handler(MessageHandler(Filters.regex("(?i)bonus"), bonus))
-    dp.add_handler(MessageHandler(Filters.regex("(?i)about"), about))
-    dp.add_handler(MessageHandler(Filters.regex("(?i)admin panel"), admin_panel))
+    dp.add_handler(MessageHandler(Filters.text(EMOJIS["new_task"]), new_task))
+    dp.add_handler(MessageHandler(Filters.text(EMOJIS["account"]), account))
+    dp.add_handler(MessageHandler(Filters.text(EMOJIS["ptrst"]), bonus))
+    dp.add_handler(MessageHandler(Filters.text(EMOJIS["friends"]), friends))
+    dp.add_handler(MessageHandler(Filters.text(EMOJIS["bonus"]), bonus))
+    dp.add_handler(MessageHandler(Filters.text(EMOJIS["ton"]), handle_ton))
+    dp.add_handler(MessageHandler(Filters.text(EMOJIS["about"]), handle_about))
+    dp.add_handler(MessageHandler(Filters.text(EMOJIS["admin_panel"]), handle_admin_panel))
+    dp.add_handler(MessageHandler(Filters.text, handle_unknown))
