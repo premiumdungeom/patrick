@@ -5,20 +5,21 @@ from utils import create_user, get_user, check_subscription, update_balance, upd
 
 # Handler for /start
 def start(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    username = update.effective_user.username
+    user = update.effective_user
+    user_id = user.id
 
-    # Check subscription for gouglenetwork
-    if not check_subscription(user_id):
-        return update.message.reply_text(
-            "❌ You didn't join our all resources.\n\n"
+    if not check_subscription(context.bot, user_id):  # ✅ PASS THE BOT!
+        update.message.reply_text(
+            "❌ You didn't join all our resources.\n\n"
             "⚠️ Subscribe to all resources:\n"
             "1️⃣ [Patrick Official](https://t.me/minohamsterdailys)\n"
             "2️⃣ [Combo Hamster](https://t.me/gouglenetwork)\n"
             "3️⃣ [AI Isaac](https://t.me/AIIsaac_bot/sponsor)\n"
             "4️⃣ [AI Isaac BNB](https://t.me/aiisaac_bnb)\n\n"
-            "Then click below 👇"
+            "Then click /start again 👇",
+            parse_mode=ParseMode.MARKDOWN
         )
+        return
     
     user_data = get_user(user_id)
 
