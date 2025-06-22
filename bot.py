@@ -1,35 +1,38 @@
-from telegram.ext import Updater
-from handlers import register_handlers
-from config import TOKEN, WEBHOOK_URL
-
-import os
 from flask import Flask, request
+from telegram import Bot, Update
+from telegram.ext import Dispatcher
+from handlers import register_handlers
+from config import TOKEN
 
-# Create a Flask web server
 app = Flask(__name__)
 
-# Create the Updater and Dispatcher
-updater = Updater(token=TOKEN, use_context=True)
-dispatcher = updater.dispatcher
+# Initialize bot and dispatcher
+bot = Bot(token=TOKEN)
+dispatcher = Dispatcher(bot, None, workers=4, use_context=True)
 
-# Register all handlers
+# Register all your handlers
 register_handlers(dispatcher)
 
 @app.route('/')
 def index():
-    return "🤖 Bot is live!"
+    return "🤖 Telegram Airdrop Bot is live!"
 
-@app.route(f'/{TOKEN}', methods=['POST'])
+@app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
-    update = updater.bot.get_update(request.get_json(force=True))
-    updater.dispatcher.process_update(update)
-    return 'OK'
+    update = Update.de_json(request.get_json(force=True), bot)
+    dispatcher.process_update(update)
+    return "OK", 200
 
 if __name__ == '__main__':
+    import os
+
+    # Get your deployment URL (set in config.py as WEBHOOK_URL)
+    from config import WEBHOOK_URL
+
     # Set webhook
-    updater.bot.set_webhook(f"{WEBHOOK_URL}/{TOKEN}")
+    bot.set_webhook(f"{WEBHOOK_URL}/{TOKEN}")
     print("✅ Webhook set and bot is running on Render...")
-    
-    # Run Flask app (Render looks for port from env var)
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+
+    # Run Flask app
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
