@@ -43,7 +43,7 @@ def start(update: Update, context: CallbackContext):
     subs_message = (
         f"{EMOJIS['start']} **Subscribe to all resources:**\n\n"
         "1️⃣ [Patrick Official](https://t.me/minohamsterdailys)\n"
-        "2️⃣ [Combo Hamster](https://t.me/combohamsterdaily)\n"
+        "2️⃣ [Combo Hamster](https://t.me/gouglenetwork)\n"
         "3️⃣ [AI Isaac](https://t.me/AIIsaac_bot/sponsor)\n"
         "4️⃣ [AI Isaac BNB](https://t.me/aiisaac_bnb)\n\n"
         "Then click below 👇"
@@ -62,10 +62,10 @@ def check_subscription(update: Update, context: CallbackContext):
         context.bot.send_message(user_id, f"❇️ Enter the captcha: {a} + {b}", reply_markup=ReplyKeyboardMarkup([["/start"]], resize_keyboard=True))
     else:
         msg = (
-            "❌ You haven't joined all channels (@combohamsterdaily)\n\n"
+            "❌ You haven't joined all channels (@gouglenetwork)\n\n"
             f"{EMOJIS['start']} Subscribe to all resources:\n\n"
             "1️⃣ [Patrick Official](https://t.me/minohamsterdailys)\n"
-            "2️⃣ [Combo Hamster](https://t.me/combohamsterdaily)\n"
+            "2️⃣ [Combo Hamster](https://t.me/gouglenetwork)\n"
             "3️⃣ [AI Isaac](https://t.me/AIIsaac_bot/sponsor)\n"
             "4️⃣ [AI Isaac BNB](https://t.me/aiisaac_bnb)\n\n"
             "After subscribing, click below 👇"
@@ -94,7 +94,7 @@ def handle_captcha(update: Update, context: CallbackContext):
                 )
                 context.bot.send_message(user_id,
                     "💎 [Click here](https://t.me/pengu_clash_bot?start=invite-fvhgw8) (Bonus 0.01 TON)\n"
-                    "💲 [Click here](https://t.me/combohamsterdailys) (Bonus 20 $PTRST)", parse_mode="Markdown"
+                    "💲 [Click here](https://t.me/gouglenetwork) (Bonus 20 $PTRST)", parse_mode="Markdown"
                 )
                 context.bot.send_message(user_id,
                     "🎁 [9 FREE NFT GIFTS](https://x.com/somebitcoin/status/1923703977813622882)", parse_mode="Markdown")
