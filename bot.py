@@ -2,7 +2,7 @@ from flask import Flask, request
 from telegram import Bot, Update
 from telegram.ext import Dispatcher
 from handlers import register_handlers
-from config import TOKEN
+from config import TOKEN, WEBHOOK_URL  # Added import for WEBHOOK_URL
 
 app = Flask(__name__)
 
@@ -25,9 +25,6 @@ def webhook():
 
 if __name__ == '__main__':
     import os
-
-    # Get your deployment URL (set in config.py as WEBHOOK_URL)
-    from config import WEBHOOK_URL
 
     # Set webhook
     bot.set_webhook(f"{WEBHOOK_URL}/{TOKEN}")
