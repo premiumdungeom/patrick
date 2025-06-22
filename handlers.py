@@ -53,7 +53,9 @@ def start(update: Update, context: CallbackContext):
 
 # Subscription check and captcha
 def check_subscription(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
+    query = update.callback_query
+    query.answer()
+    user_id = query.from_user.id
     chat_member = context.bot.get_chat_member("@gouglenetwork", user_id)
 
     if chat_member.status in ["member", "administrator", "creator"]:
@@ -102,7 +104,7 @@ def handle_captcha(update: Update, context: CallbackContext):
             else:
                 a, b = random.randint(1, 9), random.randint(1, 9)
                 captcha_store[user_id] = a + b
-                update.message.reply_text("❌ Wrong captcha... Retry:\n❇️ Enter the captcha: {} + {}".format(a, b))
+                update.message.reply_text(f"❌ Wrong captcha... Retry:\n❇️ Enter the captcha: {a} + {b}")
         except:
             update.message.reply_text("❌ Invalid input. Send the number.")
 
@@ -158,44 +160,42 @@ def withdraw_request(update: Update, context: CallbackContext):
     if user_id in ptrst_withdraw_mode:
         try:
             amount = int(txt)
+            if amount < MIN_WITHDRAWAL_PTRST:
+                update.message.reply_text(f"⚠️ Minimum amount is {MIN_WITHDRAWAL_PTRST} $PTRST")
+                return
+            user = get_user(user_id)
+            if user["balance_ptrst"] < amount:
+                update.message.reply_text("❌ Not enough balance")
+                return
+            deduct_balance(user_id, "ptrst", amount)
+            update_total_payout("ptrst", amount)
+            msg = f"💵 Withdraw Order Submitted\n━━━━━━━━━━━━━━━━━━━━\nAmount: {amount} $PTRST\nWallet: {user['wallet']}\nTime: {get_datetime()}"
+            for admin in ADMINS:
+                context.bot.send_message(admin, f"New $PTRST withdraw:\n{msg}")
+            update.message.reply_text(f"{msg}\nWait for approval.")
+            del ptrst_withdraw_mode[user_id]
         except ValueError:
-            update.message.reply_text("❌ Please enter a valid number for $PTRST amount.")
-            return
-        if amount < MIN_WITHDRAWAL_PTRST:
-            update.message.reply_text(f"⚠️ Minimum amount is {MIN_WITHDRAWAL_PTRST} $PTRST")
-            return
-        user = get_user(user_id)
-        if user["balance_ptrst"] < amount:
-            update.message.reply_text("❌ Not enough balance")
-            return
-        deduct_balance(user_id, "ptrst", amount)
-        update_total_payout("ptrst", amount)
-        msg = f"💵 Withdraw Order Submitted\n━━━━━━━━━━━━━━━━━━━━\nAmount: {amount} $PTRST\nWallet: {user['wallet']}\nTime: {get_datetime()}"
-        for admin in ADMINS:
-            context.bot.send_message(admin, f"New $PTRST withdraw:\n{msg}")
-        update.message.reply_text(f"{msg}\nWait for approval.")
-        del ptrst_withdraw_mode[user_id]
+            update.message.reply_text("❌ Please enter a valid number")
 
     elif user_id in ton_withdraw_mode:
         try:
             amount = float(txt)
+            if amount < MIN_WITHDRAWAL_TON:
+                update.message.reply_text(f"⚠️ Minimum amount is {MIN_WITHDRAWAL_TON} TON")
+                return
+            user = get_user(user_id)
+            if user["balance_ton"] < amount:
+                update.message.reply_text("❌ Not enough balance")
+                return
+            deduct_balance(user_id, "ton", amount)
+            update_total_payout("ton", amount)
+            msg = f"💎 TON Withdraw Request\n━━━━━━━━━━━━━━━━━━━━\nAmount: {amount}\nWallet: {user['wallet']}\nTime: {get_datetime()}"
+            for admin in ADMINS:
+                context.bot.send_message(admin, f"New TON withdraw:\n{msg}")
+            update.message.reply_text(f"{msg}\nWait for approval.")
+            del ton_withdraw_mode[user_id]
         except ValueError:
-            update.message.reply_text("❌ Please enter a valid number for TON amount.")
-            return
-        if amount < MIN_WITHDRAWAL_TON:
-            update.message.reply_text(f"⚠️ Minimum amount is {MIN_WITHDRAWAL_TON} TON")
-            return
-        user = get_user(user_id)
-        if user["balance_ton"] < amount:
-            update.message.reply_text("❌ Not enough balance")
-            return
-        deduct_balance(user_id, "ton", amount)
-        update_total_payout("ton", amount)
-        msg = f"💎 TON Withdraw Request\n━━━━━━━━━━━━━━━━━━━━\nAmount: {amount}\nWallet: {user['wallet']}\nTime: {get_datetime()}"
-        for admin in ADMINS:
-            context.bot.send_message(admin, f"New TON withdraw:\n{msg}")
-        update.message.reply_text(f"{msg}\nWait for approval.")
-        del ton_withdraw_mode[user_id]
+            update.message.reply_text("❌ Please enter a valid number")
 
 # 📤 Trigger withdraw
 def trigger_withdraw(update: Update, context: CallbackContext):
@@ -203,10 +203,10 @@ def trigger_withdraw(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if txt == "📤 $PTRST":
         ptrst_withdraw_mode[user_id] = True
-        update.message.reply_text("Enter amount to withdraw in $PTRST:")
+        update.message.reply_text(f"Enter amount to withdraw in $PTRST (Min: {MIN_WITHDRAWAL_PTRST}):")
     elif txt == "📤 TON":
         ton_withdraw_mode[user_id] = True
-        update.message.reply_text("Enter amount to withdraw in TON:")
+        update.message.reply_text(f"Enter amount to withdraw in TON (Min: {MIN_WITHDRAWAL_TON}):")
 
 # 📝 Wallet
 def wallet_handler(update: Update, context: CallbackContext):
@@ -283,74 +283,56 @@ def handle_task_text(update: Update, context: CallbackContext):
 
 # 👗 Broadcast
 def broadcast(update: Update, context: CallbackContext):
-    context.user_data["broadcast"] = True
-    update.message.reply_text("Send the message (text/photo/video) to broadcast:")
+    if update.effective_user.id in ADMINS:
+        context.user_data["broadcast"] = True
+        update.message.reply_text("Send the message (text/photo/video) to broadcast:")
 
 # Handle broadcast
 def handle_broadcast(update: Update, context: CallbackContext):
-    if context.user_data.get("broadcast"):
+    if context.user_data.get("broadcast") and update.effective_user.id in ADMINS:
         users = load_users()
         count = 0
         for uid in users:
             try:
                 update.message.copy(chat_id=int(uid))
                 count += 1
+                time.sleep(0.1)  # Avoid rate limiting
             except:
                 continue
         update.message.reply_text(f"✅ Sent to {count} users.")
         context.user_data["broadcast"] = False
 
-# --- Unified handler for all main menu ReplyKeyboardMarkup buttons
-def main_menu_router(update: Update, context: CallbackContext):
-    txt = update.message.text
-    if txt == f"{EMOJIS['new_task']} New Task":
-        return new_task(update, context)
-    elif txt == f"{EMOJIS['account']} Account":
-        return account(update, context)
-    elif txt == f"{EMOJIS['ptrst']} $PTRST":
-        return claim_ptrst(update, context)
-    elif txt == f"{EMOJIS['friends']} Friends":
-        return friends(update, context)
-    elif txt == f"{EMOJIS['ton']} TON":
-        return claim_ton(update, context)
-    elif txt == f"{EMOJIS['about']} About":
-        update.message.reply_text("About this bot: ...")  # Replace with about info
-    elif txt == f"{EMOJIS['admin_panel']} Admin Panel":
-        return admin_panel(update, context)
-    elif txt == "📤 $PTRST" or txt == "📤 TON":
-        return trigger_withdraw(update, context)
-    elif txt == "🏮SET_WALLET":
-        return wallet_handler(update, context)
-    elif txt == "🚏BACK":
-        return start(update, context)
-    elif txt == f"{EMOJIS['total_user']} Total User":
-        return total_user(update, context)
-    elif txt == f"{EMOJIS['total_payout']} Total Payout":
-        return total_payout(update, context)
-    elif txt == f"{EMOJIS['broadcast']} Broadcast":
-        return broadcast(update, context)
-    elif txt == f"{EMOJIS['set_new_task']} Set New Task":
-        return set_new_task(update, context)
-    # fallback to original handlers for other text
-    # If user is in withdraw or wallet input mode, let those original handlers process
-    user_id = update.effective_user.id
-    if user_id in ptrst_withdraw_mode or user_id in ton_withdraw_mode:
-        return withdraw_request(update, context)
-    if user_id in wallet_input_mode:
-        return wallet_handler(update, context)
-    if context.user_data.get("set_task"):
-        return handle_task_text(update, context)
-    if context.user_data.get("broadcast"):
-        return handle_broadcast(update, context)
-    # fallback: try captcha
-    if user_id in captcha_store:
-        return handle_captcha(update, context)
-    # fallback: ignore or send help
-    update.message.reply_text("❓ Unrecognized command. Please use the menu.")
-
 # Register handlers in bot.py
 def register_handlers(dispatcher):
+    # Command handlers
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CallbackQueryHandler(check_subscription, pattern="check_subscription"))
-    # Unified handler for all menu and text input
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, main_menu_router))
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_captcha))
+
+    # Main menu button handlers
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🆕 New Task$'), new_task))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^💰 Account$'), account))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^👫 Friends$'), friends))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^💘 Admin Panel$'), admin_panel))
+
+    # Account sub-menu handlers
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^📤 \$PTRST$'), trigger_withdraw))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^📤 TON$'), trigger_withdraw))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🏮SET_WALLET$'), wallet_handler))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🚏BACK$'), start))
+
+    # Claim handlers
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^👑 Claim PTRST$'), claim_ptrst))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^⛏️ Claim TON$'), claim_ton))
+
+    # Admin panel handlers
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🚀 Total User$'), total_user))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^💱 Total Payout$'), total_payout))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🍍 Set New Task$'), set_new_task))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^👗 Broadcast$'), broadcast))
+
+    # Text input handlers (must come after specific handlers)
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, withdraw_request))
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, wallet_handler))
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_task_text))
+    dispatcher.add_handler(MessageHandler(Filters.all & ~Filters.command, handle_broadcast))
