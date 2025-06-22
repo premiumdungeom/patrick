@@ -1,5 +1,3 @@
-# utils.py
-
 import json, os, time
 from datetime import datetime
 from telegram import ChatMember
@@ -21,7 +19,22 @@ def save_users(users):
 
 def get_user(user_id):
     users = load_users()
-    return users.get(str(user_id), None)
+    # Always return a dict, if the user does not exist, return a blank profile for new users (helps with txs etc)
+    return users.get(str(user_id), {
+        "id": user_id,
+        "username": "",
+        "referrer": None,
+        "referrals_lvl1": [],
+        "referrals_lvl2": [],
+        "balance_ptrst": 0,
+        "balance_ton": 0.0,
+        "wallet": None,
+        "last_ptrst_claim": 0,
+        "last_ton_claim": 0,
+        "last_active": time.time(),
+        "verified": False,
+        "txs": []
+    })
 
 def save_user(user_id, user_data):
     users = load_users()
@@ -30,10 +43,11 @@ def save_user(user_id, user_data):
 
 def create_user(user_id, username, referrer_id=None):
     users = load_users()
-    if str(user_id) in users:
-        return users[str(user_id)]
+    str_uid = str(user_id)
+    if str_uid in users:
+        return users[str_uid]
 
-    users[str(user_id)] = {
+    users[str_uid] = {
         "id": user_id,
         "username": username,
         "referrer": str(referrer_id) if referrer_id else None,
@@ -44,21 +58,23 @@ def create_user(user_id, username, referrer_id=None):
         "wallet": None,
         "last_ptrst_claim": 0,
         "last_ton_claim": 0,
-        "last_active": time.time()
+        "last_active": time.time(),
+        "verified": False,
+        "txs": []
     }
 
     # reward the referrer
     if referrer_id and str(referrer_id) in users:
-        users[str(referrer_id)]["referrals_lvl1"].append(str(user_id))
+        users[str(referrer_id)]["referrals_lvl1"].append(str_uid)
         users[str(referrer_id)]["balance_ptrst"] += REFERRAL_REWARDS["level_1"]
 
         lvl2 = users[str(referrer_id)].get("referrer")
         if lvl2 and lvl2 in users:
-            users[lvl2]["referrals_lvl2"].append(str(user_id))
+            users[lvl2]["referrals_lvl2"].append(str_uid)
             users[lvl2]["balance_ptrst"] += REFERRAL_REWARDS["level_2"]
 
     save_users(users)
-    return users[str(user_id)]
+    return users[str_uid]
 
 def check_cooldown(user_data, token_type):
     now = time.time()
@@ -138,3 +154,20 @@ def get_total_payouts():
 
 def get_datetime():
     return datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+
+# --- Transaction log utility ---
+def add_tx(user_id, tx_type, amount, desc):
+    users = load_users()
+    str_uid = str(user_id)
+    if str_uid not in users:
+        users[str_uid] = create_user(user_id, "")
+    user = users[str_uid]
+    if "txs" not in user:
+        user["txs"] = []
+    user["txs"].append({
+        "date": get_datetime(),
+        "type": tx_type,
+        "amount": amount,
+        "desc": desc
+    })
+    save_users(users)
