@@ -127,7 +127,8 @@ def handle_captcha(update: Update, context: CallbackContext):
                     "- Level 2: 75 PTRST\n\n"
                     "🎁 Collect $PTRST every 30 minutes: +75\n"
                     "💎 Collect TON every 8 hours: +0.025 TON\n\n"
-                    "🗓️ Listing $PTRST on May 20 at 16:00 (UTC+3)\n"
+                    "🗓️ Listing $PTRST on May 20 at 16:00 (UTC+3)\n\n"
+                    "🏆The more $PTRST you have, the more you will earn from the listing\n\n"
                     "🔥 Unallocated tokens will be burned!", parse_mode="Markdown"
                 )
                 context.bot.send_message(user_id,
@@ -135,7 +136,7 @@ def handle_captcha(update: Update, context: CallbackContext):
                     "💲 [Click here](https://t.me/gouglenetwork) (Bonus 20 $PTRST)", parse_mode="Markdown"
                 )
                 context.bot.send_message(user_id,
-                    "🎁 [9 FREE NFT GIFTS](https://x.com/somebitcoin/status/1923703977813622882)", parse_mode="Markdown")
+                    "🎁 [9 FREE NFT GIFTS](https://x.com/Megabolly)", parse_mode="Markdown")
                 show_main_menu(update, context)
             else:
                 a, b = random.randint(1, 9), random.randint(1, 9)
@@ -152,14 +153,14 @@ def account(update: Update, context: CallbackContext):
     user = update.effective_user
     data = get_user(user.id)
     txt = (
-        f"✔️ Airdrop status: Eligible\n"
-        f"🎩 User: {user.username}\n"
-        f"🆔 ID: {user.id}\n"
+        f"✔️ Airdrop status: Eligible\n\n"
+        f"🎩 User: {user.username}\n\n"
+        f"🆔 ID: {user.id}\n\n"
         f"🚧 Invited:\n"
         f"1️⃣ LVL - {len(data['referrals_lvl1'])}\n"
-        f"2️⃣ LVL - {len(data['referrals_lvl2'])}\n"
+        f"2️⃣ LVL - {len(data['referrals_lvl2'])}\n\n"
         f"👑 Balance $PTRST: {data['balance_ptrst']}\n"
-        f"💎 Balance TON: {round(data['balance_ton'], 3)}\n"
+        f"💎 Balance TON: {round(data['balance_ton'], 3)}\n\n"
         f"📝 Wallet Address: {data['wallet'] or 'Not set'}"
     )
     update.message.reply_text(txt, reply_markup=ReplyKeyboardMarkup([
@@ -172,7 +173,7 @@ def friends(update: Update, context: CallbackContext):
         "🚧 Invite your friends and get $PTRST:\n"
         "1️⃣ Level - 150 $PTRST\n"
         "2️⃣ Level - 75 $PTRST\n\n"
-        f"https://t.me/patricxst_bot?start={update.effective_user.id}"
+        f"https://t.me/ptrstr_bot?start={update.effective_user.id}"
     )
 
 def claim_ptrst(update: Update, context: CallbackContext):
