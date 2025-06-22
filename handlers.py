@@ -1,39 +1,43 @@
 import random
-import time
 from telegram import (
-    Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
+    Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove
 )
 from telegram.ext import (
     CallbackContext, CommandHandler, MessageHandler, Filters, CallbackQueryHandler
 )
 from config import *
 from utils import *
-from datetime import datetime
+from datetime import datetime, timedelta
 
 ADMINS = [5650788149, 8108410868]
+LANGUAGES = {"en": "English", "es": "Español"}  # Extend as needed
 
+# In-memory state
 captcha_store = {}
-pending_withdrawals = {}  # withdrawal_id -> dict
-pending_rejections = {}   # admin_id -> withdrawal_id
-wallet_input_mode = set()
 ptrst_withdraw_mode = {}
 ton_withdraw_mode = {}
+wallet_input_mode = set()
+pending_withdrawals = {}
 reminder_opt_in = set()
+pending_support = {}
+pending_quiz = {}
 
 def main_menu():
     return ReplyKeyboardMarkup([
-        [f"{EMOJIS['new_task']} New Task", f"{EMOJIS['account']} Account"],
-        [f"{EMOJIS['ptrst']} $PTRST", f"{EMOJIS['friends']} Friends"],
-        [f"{EMOJIS['ton']} TON", f"{EMOJIS['about']} About"],
-        [f"🏆 Leaderboard", f"📜 Transaction History"],
-        [f"🔔 Notifications"]
+        [f"{EMOJIS['new_task']} New Task", f"{EMOJIS['account']} Account", "📈 My Analytics"],
+        [f"{EMOJIS['ptrst']} $PTRST", f"{EMOJIS['friends']} Friends", "🏆 Weekly Referral Contest"],
+        [f"{EMOJIS['ton']} TON", f"{EMOJIS['about']} About", "🌳 My Referral Tree"],
+        [f"🏆 Leaderboard", f"📜 Transaction History", "🎖️ Badges"],
+        ["🔔 Notifications", "🎁 Blind Box", "🎂 Set Birthday", "🎂 Claim Birthday Reward"],
+        ["🧠 Quiz", "🆘 Help", "❓ FAQ"],
+        ["🌐 Language", "🚏BACK"]
     ], resize_keyboard=True)
 
 def admin_panel_keyboard():
     return ReplyKeyboardMarkup([
         [f"{EMOJIS['total_user']} Total User", f"{EMOJIS['total_payout']} Total Payout"],
         [f"{EMOJIS['broadcast']} Broadcast", f"{EMOJIS['set_new_task']} Set New Task"],
-        [f"💸 Airdrop $PTRST"],
+        [f"💸 Airdrop $PTRST", "📊 Analytics"],
         ["🚏BACK"]
     ], resize_keyboard=True)
 
@@ -44,6 +48,37 @@ def set_verified(user_id):
     u = get_user(user_id)
     u["verified"] = True
     save_user(user_id, u)
+
+def notify_referrers(context, new_user_id, ref1_id=None, ref2_id=None):
+    if ref1_id:
+        try:
+            context.bot.send_message(
+                ref1_id,
+                f"🎉 Someone has joined using your referral link! (Level 1)\nUser ID: {new_user_id}"
+            )
+        except Exception:
+            pass
+    if ref2_id:
+        try:
+            context.bot.send_message(
+                ref2_id,
+                f"🎉 Someone has joined using your Level 2 referral! (Level 2)\nUser ID: {new_user_id}"
+            )
+        except Exception:
+            pass
+
+def create_user_with_ref(context, user_id, username, ref=None):
+    if not user_exists(user_id):
+        if ref:
+            ref1_id = int(ref)
+            ref1_data = get_user(ref1_id)
+            ref2_id = ref1_data.get("referrer") if ref1_data else None
+            create_user(user_id, username, ref)
+            notify_referrers(context, user_id, ref1_id=ref1_id, ref2_id=ref2_id)
+        else:
+            create_user(user_id, username)
+    else:
+        pass
 
 def start(update: Update, context: CallbackContext):
     user = update.effective_user
@@ -56,9 +91,9 @@ def start(update: Update, context: CallbackContext):
 
     if context.args:
         ref = context.args[0]
-        create_user(user_id, username, ref)
+        create_user_with_ref(context, user_id, username, ref)
     else:
-        create_user(user_id, username)
+        create_user_with_ref(context, user_id, username)
 
     subs_message = (
         f"{EMOJIS['start']} **Subscribe to all resources:**\n\n"
@@ -84,7 +119,7 @@ def show_main_menu(update: Update, context: CallbackContext, edit=False):
 def check_subscription(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = query.from_user.id
-    query.answer()  # Remove Telegram's loading spinner!
+    query.answer()
     chat_member = context.bot.get_chat_member("@gouglenetwork", user_id)
     if chat_member.status in ["member", "administrator", "creator"]:
         a, b = random.randint(1, 9), random.randint(1, 9)
@@ -103,48 +138,64 @@ def check_subscription(update: Update, context: CallbackContext):
         btn = InlineKeyboardButton("✅ I've Subscribed", callback_data="check_subscription")
         context.bot.send_message(user_id, msg, reply_markup=InlineKeyboardMarkup([[btn]]), parse_mode="Markdown")
 
-def handle_captcha(update: Update, context: CallbackContext):
+def onboarding(update: Update, context: CallbackContext):
+    update.message.reply_text(
+        "👋 Welcome! Here’s how to use the bot:\n"
+        "1. /start and subscribe to channels\n"
+        "2. Set your wallet\n"
+        "3. Claim airdrops & invite friends\n"
+        "4. Withdraw to your wallet\n"
+        "5. Use /help at any time!"
+    )
+
+# --- Language, Help, FAQ, Support ---
+def choose_language(update: Update, context: CallbackContext):
+    kb = [[l] for l in LANGUAGES.values()]
+    update.message.reply_text("Please choose your language / Por favor, elige tu idioma:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+
+def set_language(update: Update, context: CallbackContext):
+    chosen = update.message.text
+    for k, v in LANGUAGES.items():
+        if v == chosen:
+            set_lang(update.effective_user.id, k)
+            update.message.reply_text(f"Language set to {v}.", reply_markup=main_menu())
+            return
+    update.message.reply_text("Unknown language.", reply_markup=main_menu())
+
+def help_command(update: Update, context: CallbackContext):
+    update.message.reply_text(
+        "🆘 *Help*\n"
+        "- Use the main menu to claim, invite, withdraw, and more.\n"
+        "- Use /faq for answers to common questions.\n"
+        "- Use /support to contact the admin.",
+        parse_mode="Markdown"
+    )
+
+def faq_command(update: Update, context: CallbackContext):
+    update.message.reply_text(
+        "❓ *FAQ*\n"
+        "Q: How do I claim rewards?\n"
+        "A: Use the $PTRST or TON buttons in the main menu.\n\n"
+        "Q: How do I set my wallet?\n"
+        "A: Press 'SET_WALLET' in Account.\n\n"
+        "Q: How do referrals work?\n"
+        "A: Share your invite link. You get rewards for Level 1 and Level 2 invites.",
+        parse_mode="Markdown"
+    )
+
+def support_command(update: Update, context: CallbackContext):
+    update.message.reply_text("Please type your issue or question. The admin will reply as soon as possible.")
+    pending_support[update.effective_user.id] = True
+
+def handle_support(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    text = update.message.text.strip()
+    if pending_support.get(user_id):
+        for admin in ADMINS:
+            context.bot.send_message(admin, f"📩 Support ticket from @{update.effective_user.username or user_id}:\n{update.message.text}")
+        update.message.reply_text("Your message was sent to the admin. Thank you!")
+        pending_support[user_id] = False
 
-    # Auto-pass/cancel captcha for admins
-    if user_id in ADMINS:
-        if user_id in captcha_store:
-            del captcha_store[user_id]
-        set_verified(user_id)
-        show_main_menu(update, context)
-        return
-
-    if user_id in captcha_store:
-        try:
-            if int(text) == captcha_store[user_id]:
-                del captcha_store[user_id]
-                set_verified(user_id)
-                context.bot.send_message(user_id,
-                    "**👑 Participate in Airdrop 100,000,000 $PTRST**\n\n"
-                    "🚧 Invite your friends and get:\n"
-                    "- Level 1: 150 PTRST\n"
-                    "- Level 2: 75 PTRST\n\n"
-                    "🎁 Collect $PTRST every 30 minutes: +75\n"
-                    "💎 Collect TON every 8 hours: +0.025 TON\n\n"
-                    "🗓️ Listing $PTRST on May 20 at 16:00 (UTC+3)\n\n"
-                    "🏆The more $PTRST you have, the more you will earn from the listing\n\n"
-                    "🔥 Unallocated tokens will be burned!", parse_mode="Markdown"
-                )
-                context.bot.send_message(user_id,
-                    "💎 [Click here](https://t.me/pengu_clash_bot?start=invite-fvhgw8) (Bonus 0.01 TON)\n"
-                    "💲 [Click here](https://t.me/gouglenetwork) (Bonus 20 $PTRST)", parse_mode="Markdown"
-                )
-                context.bot.send_message(user_id,
-                    "🎁 [9 FREE NFT GIFTS](https://x.com/Megabolly)", parse_mode="Markdown")
-                show_main_menu(update, context)
-            else:
-                a, b = random.randint(1, 9), random.randint(1, 9)
-                captcha_store[user_id] = a + b
-                update.message.reply_text("❌ Wrong captcha... Retry:\n❇️ Enter the captcha: {} + {}".format(a, b))
-        except:
-            update.message.reply_text("❌ Invalid input. Send the number.")
-
+# --- Account, New Task, Friends, Leaderboard, Transaction History, Notifications ---
 def new_task(update: Update, context: CallbackContext):
     task = open("new_task.txt").read()
     update.message.reply_text(task)
@@ -153,14 +204,14 @@ def account(update: Update, context: CallbackContext):
     user = update.effective_user
     data = get_user(user.id)
     txt = (
-        f"✔️ Airdrop status: Eligible\n\n"
-        f"🎩 User: {user.username}\n\n"
-        f"🆔 ID: {user.id}\n\n"
+        f"✔️ Airdrop status: Eligible\n"
+        f"🎩 User: {user.username}\n"
+        f"🆔 ID: {user.id}\n"
         f"🚧 Invited:\n"
         f"1️⃣ LVL - {len(data['referrals_lvl1'])}\n"
-        f"2️⃣ LVL - {len(data['referrals_lvl2'])}\n\n"
+        f"2️⃣ LVL - {len(data['referrals_lvl2'])}\n"
         f"👑 Balance $PTRST: {data['balance_ptrst']}\n"
-        f"💎 Balance TON: {round(data['balance_ton'], 3)}\n\n"
+        f"💎 Balance TON: {round(data['balance_ton'], 3)}\n"
         f"📝 Wallet Address: {data['wallet'] or 'Not set'}"
     )
     update.message.reply_text(txt, reply_markup=ReplyKeyboardMarkup([
@@ -173,42 +224,8 @@ def friends(update: Update, context: CallbackContext):
         "🚧 Invite your friends and get $PTRST:\n"
         "1️⃣ Level - 150 $PTRST\n"
         "2️⃣ Level - 75 $PTRST\n\n"
-        f"https://t.me/ptrstr_bot?start={update.effective_user.id}"
+        f"https://t.me/patricxst_bot?start={update.effective_user.id}"
     )
-
-def claim_ptrst(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    data = get_user(user_id)
-    left = check_cooldown(data, "ptrst")
-    if left > 0:
-        update.message.reply_text(f"⏳ Next bonus in {format_time(left)}")
-        return
-    reward = random.randint(100, 1000)
-    update_balance(user_id, "ptrst", reward)
-    update_claim_time(user_id, "ptrst")
-    inviter = data.get("referrer")
-    if inviter:
-        bonus = int(reward * 0.25)
-        update_balance(inviter, "ptrst", bonus)
-    add_tx(user_id, "Airdrop", reward, "You claimed bonus $PTRST")
-    update.message.reply_text(f"👑 Successful! You got {reward} $PTRST")
-
-def claim_ton(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    data = get_user(user_id)
-    left = check_cooldown(data, "ton")
-    if left > 0:
-        update.message.reply_text(f"⏳ Next bonus in {format_time(left)}")
-        return
-    reward = round(random.uniform(0.005, 0.025), 3)
-    update_balance(user_id, "ton", reward)
-    update_claim_time(user_id, "ton")
-    inviter = data.get("referrer")
-    if inviter:
-        bonus = round(reward * 0.33, 3)
-        update_balance(inviter, "ton", bonus)
-    add_tx(user_id, "Airdrop", reward, "You claimed bonus TON")
-    update.message.reply_text(f"⛏️ Successful! You got {reward} TON")
 
 def leaderboard(update: Update, context: CallbackContext):
     users = load_users()
@@ -244,49 +261,193 @@ def notifications(update: Update, context: CallbackContext):
         reminder_opt_in.add(user_id)
         update.message.reply_text("🔔 Notifications turned ON.")
 
-def airdrop_ptrst_init(update: Update, context: CallbackContext):
-    update.message.reply_text("Enter amount of $PTRST to airdrop to all users:")
-    context.user_data["airdrop_ptrst"] = True
+# --- Claims, Streaks, Badges, Analytics ---
+def grant_badge(user_id, badge):
+    u = get_user(user_id)
+    badges = set(u.get("badges", []))
+    if badge not in badges:
+        badges.add(badge)
+        u["badges"] = list(badges)
+        save_user(user_id, u)
 
-def airdrop_ptrst_execute(update: Update, context: CallbackContext):
+def check_achievements(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    if user_id not in ADMINS:
-        return
-    try:
-        amount = int(update.message.text)
-    except ValueError:
-        update.message.reply_text("Please enter a valid integer amount.")
-        return
-    context.user_data["airdrop_amount"] = amount
-    update.message.reply_text("Enter the message to send with the airdrop:")
-    context.user_data["airdrop_ptrst"] = False
-    context.user_data["airdrop_ptrst_msg"] = True
+    u = get_user(user_id)
+    badges = u.get("badges", [])
+    msg = "🎖️ Your achievement badges:\n"
+    if not badges:
+        msg += "No badges yet. Earn them by being active!"
+    else:
+        msg += "\n".join(f"- {b}" for b in badges)
+    update.message.reply_text(msg)
 
-def airdrop_ptrst_message(update: Update, context: CallbackContext):
+def update_streak(user_id):
+    u = get_user(user_id)
+    today = datetime.utcnow().date()
+    last = u.get("last_claim_date")
+    streak = u.get("daily_streak", 0)
+    if last:
+        last_dt = datetime.strptime(last, "%Y-%m-%d").date()
+        if (today - last_dt).days == 1:
+            streak += 1
+        elif (today - last_dt).days > 1:
+            streak = 1
+    else:
+        streak = 1
+    u["last_claim_date"] = today.strftime("%Y-%m-%d")
+    u["daily_streak"] = streak
+    save_user(user_id, u)
+    return streak
+
+def claim_ptrst(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    if user_id not in ADMINS:
+    data = get_user(user_id)
+    left = check_cooldown(data, "ptrst")
+    if left > 0:
+        update.message.reply_text(f"⏳ Next bonus in {format_time(left)}")
         return
-    message = update.message.text
-    amount = context.user_data.get("airdrop_amount", 10)
+    reward = random.randint(100, 1000)
+    streak = update_streak(user_id)
+    if streak >= 3:
+        reward += 150
+        grant_badge(user_id, f"Streak {streak} days")
+    update_balance(user_id, "ptrst", reward)
+    update_claim_time(user_id, "ptrst")
+    inviter = data.get("referrer")
+    if inviter:
+        bonus = int(reward * 0.25)
+        update_balance(inviter, "ptrst", bonus)
+    add_tx(user_id, "Airdrop", reward, "You claimed bonus $PTRST")
+    update.message.reply_text(f"👑 Successful! You got {reward} $PTRST\n🔥 Streak: {streak} day(s)")
+
+def claim_ton(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    data = get_user(user_id)
+    left = check_cooldown(data, "ton")
+    if left > 0:
+        update.message.reply_text(f"⏳ Next bonus in {format_time(left)}")
+        return
+    reward = round(random.uniform(0.005, 0.025), 3)
+    update_balance(user_id, "ton", reward)
+    update_claim_time(user_id, "ton")
+    inviter = data.get("referrer")
+    if inviter:
+        bonus = round(reward * 0.33, 3)
+        update_balance(inviter, "ton", bonus)
+    add_tx(user_id, "Airdrop", reward, "You claimed bonus TON")
+    update.message.reply_text(f"⛏️ Successful! You got {reward} TON")
+
+# --- Referral Contest, Quiz, Blind Box, Birthday ---
+def referral_contest_leaderboard(update: Update, context: CallbackContext):
     users = load_users()
-    count = 0
+    week = datetime.utcnow().isocalendar()[1]
+    scores = []
     for uid, data in users.items():
-        try:
-            update_balance(uid, "ptrst", amount)
-            add_tx(uid, "Airdrop", amount, message)
-            context.bot.send_message(int(uid), f"🎉 {message}\nYou received {amount} $PTRST!")
-            count += 1
-        except Exception:
-            continue
-    update.message.reply_text(f"✅ Sent {amount} $PTRST to {count} users.")
-    context.user_data["airdrop_ptrst_msg"] = False
+        if isinstance(data, dict):
+            week_refs = [r for r in data.get("referral_timestamps", []) if datetime.strptime(r["date"], "%Y-%m-%d").isocalendar()[1] == week]
+            scores.append((uid, len(week_refs)))
+    scores = sorted(scores, key=lambda x: -x[1])[:10]
+    msg = "🏆 Weekly Referral Contest Leaderboard:\n"
+    for i, (uid, refs) in enumerate(scores, 1):
+        user = get_user(uid)
+        uname = user.get("username") or str(uid)
+        msg += f"{i}. @{uname} - {refs} new this week\n"
+    update.message.reply_text(msg)
 
+QUIZ_QUESTIONS = [
+    {"q": "What is the symbol for TON?", "a": ["ton"]},
+    {"q": "How many levels of referral rewards are there?", "a": ["2", "two"]},
+]
+
+def quiz_command(update: Update, context: CallbackContext):
+    q = random.choice(QUIZ_QUESTIONS)
+    pending_quiz[update.effective_user.id] = q
+    update.message.reply_text(f"Quiz time!\n{q['q']}")
+
+def handle_quiz_answer(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    if user_id not in pending_quiz:
+        return
+    answer = update.message.text.strip().lower()
+    q = pending_quiz[user_id]
+    if answer in q["a"]:
+        update_balance(user_id, "ptrst", 100)
+        update.message.reply_text("Correct! You win 100 $PTRST.")
+        del pending_quiz[user_id]
+    else:
+        update.message.reply_text("Incorrect. Try again!")
+
+def user_analytics(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    data = get_user(user_id)
+    msg = (
+        f"📈 *Your Analytics*\n"
+        f"Total $PTRST earned: {sum([tx['amount'] for tx in data.get('txs', []) if tx['type']=='Airdrop'])}\n"
+        f"Referrals level 1: {len(data.get('referrals_lvl1', []))}\n"
+        f"Referrals level 2: {len(data.get('referrals_lvl2', []))}\n"
+        f"Daily streak: {data.get('daily_streak', 0)}\n"
+        f"Badges: {', '.join(data.get('badges', [])) if data.get('badges', []) else 'None'}"
+    )
+    update.message.reply_text(msg, parse_mode="Markdown")
+
+def referral_tree(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    u = get_user(user_id)
+    tree = []
+    for uid in u.get("referrals_lvl1", []):
+        user = get_user(uid)
+        subtree = [f"  └ {s}" for s in user.get("referrals_lvl1", [])]
+        tree.append(f"{uid} ({len(user.get('referrals_lvl1', []))}):\n" + "\n".join(subtree))
+    if not tree:
+        update.message.reply_text("No downline yet!")
+    else:
+        update.message.reply_text("Your referral tree:\n" + "\n".join(tree))
+
+def blind_box(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    prize = random.choice([50, 100, 200, 0, "badge"])
+    if prize == "badge":
+        grant_badge(user_id, "Lucky Box Winner")
+        update.message.reply_text("🎁 You got a special badge: Lucky Box Winner!")
+    elif prize > 0:
+        update_balance(user_id, "ptrst", prize)
+        update.message.reply_text(f"🎁 You won {prize} $PTRST!")
+    else:
+        update.message.reply_text("🎁 Sorry, nothing this time. Try again later!")
+
+def set_birthday(update: Update, context: CallbackContext):
+    update.message.reply_text("Send your birthday in YYYY-MM-DD format.")
+
+def save_birthday(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    text = update.message.text.strip()
+    try:
+        dt = datetime.strptime(text, "%Y-%m-%d")
+        u = get_user(user_id)
+        u["birthday"] = text
+        save_user(user_id, u)
+        update.message.reply_text("Birthday saved!")
+    except:
+        update.message.reply_text("Invalid format. Try again.")
+
+def birthday_claim(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    u = get_user(user_id)
+    today = datetime.utcnow().strftime("%m-%d")
+    if u.get("birthday", "")[5:] == today and not u.get("birthday_claimed") == datetime.utcnow().strftime("%Y"):
+        update_balance(user_id, "ptrst", 500)
+        u["birthday_claimed"] = datetime.utcnow().strftime("%Y")
+        save_user(user_id, u)
+        update.message.reply_text("🎂 Happy birthday! You got 500 $PTRST!")
+    else:
+        update.message.reply_text("It's not your birthday, or you already claimed this year.")
+
+# --- Withdraw, Wallet, Admin, Airdrop, Broadcast, Set Task, Analytics, etc. ---
 def withdraw_request(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     txt = update.message.text
     token = None
 
-    # Check which mode
     if user_id in ptrst_withdraw_mode:
         token = "PTRST"
         try:
@@ -302,7 +463,6 @@ def withdraw_request(update: Update, context: CallbackContext):
             update.message.reply_text("❌ Not enough balance")
             return
         deduct_balance(user_id, "ptrst", amount)
-        # remove mode
         del ptrst_withdraw_mode[user_id]
     elif user_id in ton_withdraw_mode:
         token = "TON"
@@ -331,9 +491,7 @@ def withdraw_request(update: Update, context: CallbackContext):
         "wallet": user["wallet"],
         "token": token,
     }
-
     add_tx(user_id, "Withdraw", -amount, f"{token} Withdraw requested")
-
     withdraw_msg = (
         f"💵 Withdraw Order Submitted\n━━━━━━━━━━━━━━━━━━━━\n"
         f"User: @{user.get('username', user_id)}\n"
@@ -373,7 +531,7 @@ def inline_callback_handler(update: Update, context: CallbackContext):
     elif data.startswith("wd_reject_"):
         withdrawal_id = data[len("wd_reject_"):]
         if withdrawal_id in pending_withdrawals:
-            pending_rejections[admin_id] = withdrawal_id
+            context.user_data["pending_reject"] = withdrawal_id
             query.message.reply_text("Please type the reason for rejection:", reply_markup=ReplyKeyboardMarkup([["🚫 Cancel"]], resize_keyboard=True))
             query.edit_message_text("Please reply with the rejection reason!")
         else:
@@ -381,23 +539,24 @@ def inline_callback_handler(update: Update, context: CallbackContext):
 
 def process_rejection_reason(update: Update, context: CallbackContext):
     admin_id = update.effective_user.id
-    if admin_id in pending_rejections:
-        reason = update.message.text
-        withdrawal_id = pending_rejections.pop(admin_id)
-        wd = pending_withdrawals.pop(withdrawal_id, None)
-        if wd:
-            user_id = wd["user_id"]
-            amount = wd["amount"]
-            token = wd["token"]
-            # Refund
-            if token == "PTRST":
-                update_balance(user_id, "ptrst", amount)
-            elif token == "TON":
-                update_balance(user_id, "ton", amount)
-            context.bot.send_message(user_id, f"❌ Your withdrawal was rejected.\nReason: {reason}\nBalance returned.")
-            update.message.reply_text("User notified and balance restored.")
-        else:
-            update.message.reply_text("Withdrawal not found.")
+    withdrawal_id = context.user_data.get("pending_reject")
+    if not withdrawal_id:
+        return
+    reason = update.message.text
+    wd = pending_withdrawals.pop(withdrawal_id, None)
+    if wd:
+        user_id = wd["user_id"]
+        amount = wd["amount"]
+        token = wd["token"]
+        if token == "PTRST":
+            update_balance(user_id, "ptrst", amount)
+        elif token == "TON":
+            update_balance(user_id, "ton", amount)
+        context.bot.send_message(user_id, f"❌ Your withdrawal was rejected.\nReason: {reason}\nBalance returned.")
+        update.message.reply_text("User notified and balance restored.")
+    else:
+        update.message.reply_text("Withdrawal not found.")
+    context.user_data["pending_reject"] = None
 
 def trigger_withdraw(update: Update, context: CallbackContext):
     txt = update.message.text
@@ -460,9 +619,73 @@ def handle_broadcast(update: Update, context: CallbackContext):
         update.message.reply_text(f"✅ Sent to {count} users.")
         context.user_data["broadcast"] = False
 
+def analytics(update: Update, context: CallbackContext):
+    users = load_users()
+    total_users = len(users)
+    now = datetime.utcnow()
+    active_7d = 0
+    total_referrals = 0
+    total_withdraw_ptrst = 0
+    total_withdraw_ton = 0
+    top_ptrst = []
+    top_invites = []
+    for uid, data in users.items():
+        if isinstance(data, dict):
+            last_tx = data.get("txs", [])
+            if last_tx and "date" in last_tx[-1]:
+                try:
+                    tx_dt = datetime.strptime(last_tx[-1]["date"], "%Y-%m-%d %H:%M:%S")
+                    if (now - tx_dt).days < 7:
+                        active_7d += 1
+                except:
+                    pass
+            total_referrals += len(data.get('referrals_lvl1', []))
+            bal_ptrst = data.get("balance_ptrst", 0)
+            bal_ton = data.get("balance_ton", 0)
+            for tx in data.get("txs", []):
+                if tx["type"] == "Withdraw":
+                    if "PTRST" in tx["desc"]:
+                        total_withdraw_ptrst += abs(tx["amount"])
+                    elif "TON" in tx["desc"]:
+                        total_withdraw_ton += abs(tx["amount"])
+            top_ptrst.append((uid, bal_ptrst))
+            top_invites.append((uid, len(data.get('referrals_lvl1', []))))
+    top_ptrst = sorted(top_ptrst, key=lambda x: -x[1])[:3]
+    top_invites = sorted(top_invites, key=lambda x: -x[1])[:3]
+    msg = (
+        f"📊 <b>Analytics</b>\n"
+        f"Total Users: {total_users}\n"
+        f"Active (last 7d): {active_7d}\n"
+        f"Total Referrals: {total_referrals}\n"
+        f"Total $PTRST Withdrawn: {total_withdraw_ptrst}\n"
+        f"Total TON Withdrawn: {total_withdraw_ton}\n\n"
+        f"🏅 <b>Top 3 $PTRST Holders:</b>\n"
+    )
+    for i, (uid, bal) in enumerate(top_ptrst, 1):
+        user = get_user(uid)
+        uname = user.get("username") or uid
+        msg += f"{i}. @{uname} - {bal} $PTRST\n"
+    msg += "\n🏅 <b>Top 3 Inviters:</b>\n"
+    for i, (uid, refs) in enumerate(top_invites, 1):
+        user = get_user(uid)
+        uname = user.get("username") or uid
+        msg += f"{i}. @{uname} - {refs} invited\n"
+    update.message.reply_text(msg, parse_mode="HTML")
+
+# --- Main Menu Router ---
 def main_menu_router(update: Update, context: CallbackContext):
-    txt = update.message.text
     user_id = update.effective_user.id
+    txt = update.message.text.strip()
+
+    if txt in LANGUAGES.values():
+        return set_language(update, context)
+    if user_id in pending_support and pending_support[user_id]:
+        return handle_support(update, context)
+    if user_id in pending_quiz:
+        return handle_quiz_answer(update, context)
+    if getattr(context.user_data, "setting_birthday", False):
+        context.user_data["setting_birthday"] = False
+        return save_birthday(update, context)
 
     if txt == f"{EMOJIS['new_task']} New Task":
         return new_task(update, context)
@@ -489,6 +712,33 @@ def main_menu_router(update: Update, context: CallbackContext):
     elif txt == "🚏BACK":
         show_main_menu(update, context)
         return
+    elif txt == "🌐 Language":
+        return choose_language(update, context)
+    elif txt == "🆘 Help":
+        return help_command(update, context)
+    elif txt == "❓ FAQ":
+        return faq_command(update, context)
+    elif txt == "🎖️ Badges":
+        return check_achievements(update, context)
+    elif txt == "📈 My Analytics":
+        return user_analytics(update, context)
+    elif txt == "🌳 My Referral Tree":
+        return referral_tree(update, context)
+    elif txt == "🎁 Blind Box":
+        return blind_box(update, context)
+    elif txt == "🎂 Set Birthday":
+        context.user_data["setting_birthday"] = True
+        return set_birthday(update, context)
+    elif txt == "🎂 Claim Birthday Reward":
+        return birthday_claim(update, context)
+    elif txt == "🏆 Weekly Referral Contest":
+        return referral_contest_leaderboard(update, context)
+    elif txt == "🧠 Quiz":
+        return quiz_command(update, context)
+    elif txt == "/onboarding":
+        return onboarding(update, context)
+    elif txt == "/support":
+        return support_command(update, context)
     elif txt == f"{EMOJIS['total_user']} Total User":
         return total_user(update, context)
     elif txt == f"{EMOJIS['total_payout']} Total Payout":
@@ -499,6 +749,8 @@ def main_menu_router(update: Update, context: CallbackContext):
         return set_new_task(update, context)
     elif txt == "💸 Airdrop $PTRST":
         return airdrop_ptrst_init(update, context)
+    elif txt == "📊 Analytics":
+        return analytics(update, context)
     if user_id in ptrst_withdraw_mode or user_id in ton_withdraw_mode:
         return withdraw_request(update, context)
     if user_id in wallet_input_mode:
@@ -507,20 +759,21 @@ def main_menu_router(update: Update, context: CallbackContext):
         return handle_task_text(update, context)
     if context.user_data.get("broadcast"):
         return handle_broadcast(update, context)
-    if context.user_data.get("airdrop_ptrst"):
-        return airdrop_ptrst_execute(update, context)
-    if context.user_data.get("airdrop_ptrst_msg"):
-        return airdrop_ptrst_message(update, context)
     if user_id in captcha_store:
         return handle_captcha(update, context)
-    update.message.reply_text("❓ Unrecognized command. Please use the menu.")
+    update.message.reply_text("❓ Unrecognized command. Use the menu or /help.")
 
 def register_handlers(dispatcher):
+    dispatcher.add_handler(MessageHandler(Filters.text & Filters.user(user_id=ADMINS), process_rejection_reason))
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("admin", admin))
+    dispatcher.add_handler(CommandHandler("help", help_command))
+    dispatcher.add_handler(CommandHandler("faq", faq_command))
+    dispatcher.add_handler(CommandHandler("onboarding", onboarding))
+    dispatcher.add_handler(CommandHandler("support", support_command))
+    dispatcher.add_handler(CommandHandler("quiz", quiz_command))
     dispatcher.add_handler(CallbackQueryHandler(inline_callback_handler))
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, main_menu_router))
-    dispatcher.add_handler(MessageHandler(Filters.text & Filters.user(user_id=ADMINS), process_rejection_reason))
 
 def add_tx(user_id, tx_type, amount, desc):
     user = get_user(user_id)
