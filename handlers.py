@@ -10,7 +10,6 @@ from config import *
 from utils import *
 from datetime import datetime
 
-# --- HARD CODED ADMIN IDS ---
 ADMINS = [5650788149, 8108410868]
 
 captcha_store = {}
@@ -20,7 +19,6 @@ ptrst_withdraw_mode = {}
 ton_withdraw_mode = {}
 reminder_opt_in = set()
 
-# --- Main Menu Buttons ---
 def main_menu():
     return ReplyKeyboardMarkup([
         [f"{EMOJIS['new_task']} New Task", f"{EMOJIS['account']} Account"],
@@ -51,7 +49,6 @@ def start(update: Update, context: CallbackContext):
     user_id = user.id
     username = user.username or user.first_name
 
-    # If already verified, show menu
     if is_verified(user_id):
         show_main_menu(update, context)
         return
@@ -73,33 +70,27 @@ def start(update: Update, context: CallbackContext):
     btn = InlineKeyboardButton("✅ I've Subscribed", callback_data="check_subscription")
     update.message.reply_text(subs_message, reply_markup=InlineKeyboardMarkup([[btn]]), parse_mode="Markdown")
 
-def show_main_menu(update: Update, context: CallbackContext, edit=False):
-    user = update.effective_user
-    is_admin = user.id in ADMINS
+def admin(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    if user_id not in ADMINS:
+        update.message.reply_text("❌ You are not an admin.")
+        return
+    context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="💘 Admin Panel",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Open Admin Panel", callback_data="admin_panel")]])
+    )
 
-    # For /start or text, not callback
+def show_main_menu(update: Update, context: CallbackContext, edit=False):
     if not hasattr(update, "callback_query") or not edit:
         update.message.reply_text("🏠 Main Menu", reply_markup=main_menu())
-        if is_admin:
-            context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💘 Admin Panel", callback_data="admin_panel")]])
-            )
     else:
-        # For callback query (inline), edit the message and send admin panel if admin
         context.bot.edit_message_text(
             chat_id=update.effective_chat.id,
             message_id=update.callback_query.message.message_id,
             text="🏠 Main Menu",
             reply_markup=main_menu()
         )
-        if is_admin:
-            context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text="",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💘 Admin Panel", callback_data="admin_panel")]])
-            )
 
 def check_subscription(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
@@ -423,7 +414,6 @@ def main_menu_router(update: Update, context: CallbackContext):
     txt = update.message.text
     user_id = update.effective_user.id
 
-    # Main menu
     if txt == f"{EMOJIS['new_task']} New Task":
         return new_task(update, context)
     elif txt == f"{EMOJIS['account']} Account":
@@ -449,7 +439,6 @@ def main_menu_router(update: Update, context: CallbackContext):
     elif txt == "🚏BACK":
         show_main_menu(update, context)
         return
-    # Admin panel
     elif txt == f"{EMOJIS['total_user']} Total User":
         return total_user(update, context)
     elif txt == f"{EMOJIS['total_payout']} Total Payout":
@@ -460,7 +449,6 @@ def main_menu_router(update: Update, context: CallbackContext):
         return set_new_task(update, context)
     elif txt == "💸 Airdrop $PTRST":
         return airdrop_ptrst_init(update, context)
-    # Special states
     if user_id in ptrst_withdraw_mode or user_id in ton_withdraw_mode:
         return withdraw_request(update, context)
     if user_id in wallet_input_mode:
@@ -493,6 +481,7 @@ def inline_callback_handler(update: Update, context: CallbackContext):
 
 def register_handlers(dispatcher):
     dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("admin", admin))
     dispatcher.add_handler(CallbackQueryHandler(inline_callback_handler))
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, main_menu_router))
 
