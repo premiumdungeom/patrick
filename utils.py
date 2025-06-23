@@ -7,11 +7,20 @@ from config import REFERRAL_REWARDS, PTRST_COOLDOWN, TON_COOLDOWN
 USERS_FILE = "users.json"
 PAYOUTS_FILE = "payouts.json"
 
-def load_users():
-    if os.path.exists(USERS_FILE):
-        with open(USERS_FILE, "r") as f:
+def user_exists(user_id: int) -> bool:
+    """Check if a user exists in the database"""
+    users = load_users()
+    return str(user_id) in users
+
+def load_users() -> dict:
+    """Load all users from JSON file"""
+    if not os.path.exists('users.json'):
+        return {}
+    try:
+        with open('users.json', 'r') as f:
             return json.load(f)
-    return {}
+    except (json.JSONDecodeError, FileNotFoundError):
+        return {}
 
 def save_users(users):
     with open(USERS_FILE, "w") as f:
