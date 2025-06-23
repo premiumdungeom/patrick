@@ -1,17 +1,16 @@
 from flask import Flask, request
 from telegram import Bot, Update
 from telegram.ext import Dispatcher
-from handlers import register_handlers
-from config import TOKEN, WEBHOOK_URL  # Added import for WEBHOOK_URL
+from handlers import register_handlers, schedule_weekly_contest
+from config import TOKEN, WEBHOOK_URL
 
 app = Flask(__name__)
 
-# Initialize bot and dispatcher
 bot = Bot(token=TOKEN)
 dispatcher = Dispatcher(bot, None, workers=4, use_context=True)
 
-# Register all your handlers
 register_handlers(dispatcher)
+schedule_weekly_contest(bot)
 
 @app.route('/')
 def index():
@@ -25,11 +24,7 @@ def webhook():
 
 if __name__ == '__main__':
     import os
-
-    # Set webhook
     bot.set_webhook(f"{WEBHOOK_URL}/{TOKEN}")
     print("✅ Webhook set and bot is running on Render...")
-
-    # Run Flask app
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
