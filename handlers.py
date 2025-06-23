@@ -22,29 +22,14 @@ pending_quiz = {}
 blind_box_timers = {}
 pending_reject_reason = {}
 
-airdrop_ptrst_state = {}  # {admin_id: {'step': 'amount'/'message', 'amount': int}}
-give_ton_state = {}       # {admin_id: {'step': 'username'/'amount', 'username': str}}
+airdrop_ptrst_state = {}
+give_ton_state = {}
 
-# --- Weekly contest state ---
 weekly_contest_leaderboard = []
 weekly_contest_last_update = 0
 weekly_contest_week = None
 weekly_prize_usd = 40000
 weekly_prize_ton = 0  # This should be set according to TON price or by admin
-
-# --- Prize structure ---
-def get_weekly_prizes():
-    prizes = {
-        1: 500, 2: 350, 3: 250, 4: 200, 5: 150,
-        6: 100, 7: 90, 8: 80, 9: 70, 10: 60
-    }
-    for i in range(11, 51):
-        prizes[i] = 40
-    for i in range(51, 101):
-        prizes[i] = 20
-    for i in range(101, 251):
-        prizes[i] = 10
-    return prizes
 
 LANGUAGES = {"en": "English", "es": "Español"}
 
@@ -674,6 +659,18 @@ def analytics(update: Update, context: CallbackContext):
         uname = user.get("username") or uid
         msg += f"{i}. @{uname} - {refs} invited\n"
     update.message.reply_text(msg, parse_mode="HTML")
+
+def get_weekly_prizes():
+    prizes = {}
+    for i in range(1, 11):
+        prizes[i] = [500, 350, 250, 200, 150, 100, 90, 80, 70, 60][i-1]
+    for i in range(11, 51):
+        prizes[i] = 40
+    for i in range(51, 101):
+        prizes[i] = 20
+    for i in range(101, 251):
+        prizes[i] = 10
+    return prizes
 
 def update_weekly_leaderboard(force=False):
     global weekly_contest_leaderboard, weekly_contest_last_update, weekly_contest_week
