@@ -832,6 +832,46 @@ def handle_give_ton(update: Update, context: CallbackContext):
         update.message.reply_text("Please enter a valid positive number.")
         del give_ton_state[user_id]
 
+def inline_callback_handler(update: Update, context: CallbackContext):
+    query = update.callback_query
+    data = query.data
+    query.answer()
+
+    try:
+        if data == "check_subscription":
+            check_subscription(update, context)
+        elif data.startswith("wd_accept_"):
+            withdrawal_id = data[len("wd_accept_"):]
+            wd = pending_withdrawals.pop(withdrawal_id, None)
+            if wd:
+                user_id = wd["user_id"]
+                amount = wd["amount"]
+                token = wd["token"]
+                context.bot.send_message(
+                    user_id, 
+                    f"✅ Your withdrawal of {amount} {token} has been approved by admin."
+                )
+                query.edit_message_text(f"✅ Withdrawal accepted and user notified.")
+            else:
+                query.edit_message_text("Withdrawal already processed or not found.")
+        elif data.startswith("wd_reject_"):
+            withdrawal_id = data[len("wd_reject_"):]
+            if withdrawal_id in pending_withdrawals:
+                pending_reject_reason[query.from_user.id] = withdrawal_id
+                query.edit_message_text("Please type the reason for rejection. Or send 🚫 Cancel")
+                context.bot.send_message(
+                    query.from_user.id,
+                    "Please enter rejection reason:",
+                    reply_markup=ReplyKeyboardMarkup([["🚫 Cancel"]], resize_keyboard=True)
+                )
+            else:
+                query.edit_message_text("Withdrawal already processed or not found.")
+        else:
+            query.edit_message_text("Unknown button action")
+    except Exception as e:
+        logger.error(f"Error in inline_callback_handler: {e}")
+        query.edit_message_text("An error occurred. Please try again.")
+
 def add_tx(user_id, tx_type, amount, desc):
     user = get_user(user_id)
     if "txs" not in user:
