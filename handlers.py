@@ -879,6 +879,109 @@ def add_tx(user_id, tx_type, amount, desc):
     user["txs"].append({"date": get_datetime(), "type": tx_type, "amount": amount, "desc": desc})
     save_user(user_id, user)
 
+def main_menu_router(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    txt = update.message.text.strip()
+
+    if user_id in pending_reject_reason:
+        return process_rejection_reason(update, context)
+    if user_id in captcha_store:
+        return handle_captcha(update, context)
+    if txt in LANGUAGES.values():
+        return set_language(update, context)
+    if user_id in pending_support and pending_support[user_id]:
+        return handle_support(update, context)
+    if user_id in pending_quiz:
+        return handle_quiz_answer(update, context)
+    if context.user_data.get("setting_birthday", False):
+        context.user_data["setting_birthday"] = False
+        return save_birthday(update, context)
+    if context.user_data.get("set_task"):
+        return handle_task_text(update, context)
+    if context.user_data.get("broadcast"):
+        return handle_broadcast(update, context)
+    if user_id in ptrst_withdraw_mode or user_id in ton_withdraw_mode:
+        return withdraw_request(update, context)
+    if user_id in wallet_input_mode:
+        return wallet_handler(update, context)
+    if user_id in airdrop_ptrst_state:
+        return handle_airdrop_ptrst(update, context)
+    if user_id in give_ton_state:
+        return handle_give_ton(update, context)
+
+    # Main menu button handlers
+    if txt == f"{EMOJIS['new_task']} New Task":
+        return new_task(update, context)
+    elif txt == f"{EMOJIS['account']} Account":
+        return account(update, context)
+    elif txt == f"{EMOJIS['ptrst']} $PTRST":
+        return claim_ptrst(update, context)
+    elif txt == f"{EMOJIS['friends']} Friends":
+        return friends(update, context)
+    elif txt == f"{EMOJIS['ton']} TON":
+        return claim_ton(update, context)
+    elif txt == f"{EMOJIS['about']} About":
+        update.message.reply_text("About this bot: ...")
+    elif txt == "🏆 Leaderboard":
+        return leaderboard(update, context)
+    elif txt == "📜 Transaction History":
+        return transaction_history(update, context)
+    elif txt == "🔔 Notifications":
+        return notifications(update, context)
+    elif txt == "📤 $PTRST" or txt == "📤 TON":
+        return trigger_withdraw(update, context)
+    elif txt == "🏮SET_WALLET":
+        return wallet_handler(update, context)
+    elif txt == "🚏BACK":
+        return show_main_menu(update, context)
+    elif txt == "🌐 Language":
+        return choose_language(update, context)
+    elif txt == "🆘 Help":
+        return help_command(update, context)
+    elif txt == "❓ FAQ":
+        return faq_command(update, context)
+    elif txt == "🎖️ Badges":
+        return check_achievements(update, context)
+    elif txt == "📈 My Analytics":
+        return user_analytics(update, context)
+    elif txt == "🌳 My Referral Tree":
+        return referral_tree(update, context)
+    elif txt == "🎁 Blind Box":
+        return blind_box(update, context)
+    elif txt == "🎂 Set Birthday":
+        context.user_data["setting_birthday"] = True
+        return set_birthday(update, context)
+    elif txt == "🎂 Claim Birthday Reward":
+        return birthday_claim(update, context)
+    elif txt == "🏆 Weekly Referral Contest":
+        return referral_contest_leaderboard(update, context)
+    elif txt == "🧠 Quiz":
+        return quiz_command(update, context)
+    elif txt == "/onboarding":
+        return onboarding(update, context)
+    elif txt == "/support":
+        return support_command(update, context)
+    elif txt == f"{EMOJIS['total_user']} Total User":
+        return total_user(update, context)
+    elif txt == f"{EMOJIS['total_payout']} Total Payout":
+        return total_payout(update, context)
+    elif txt == f"{EMOJIS['broadcast']} Broadcast":
+        return broadcast(update, context)
+    elif txt == f"{EMOJIS['set_new_task']} Set New Task":
+        return set_new_task(update, context)
+    elif txt == "💸 Airdrop $PTRST" and user_id in ADMINS:
+        return start_airdrop_ptrst(update, context)
+    elif txt == "💵Give TON" and user_id in ADMINS:
+        return start_give_ton(update, context)
+    elif txt == "📊 Analytics":
+        return analytics(update, context)
+    elif txt == "/admin":
+        return admin(update, context)
+    elif txt == "/start":
+        return start(update, context)
+    else:
+        update.message.reply_text("❓ Unrecognized command. Use the menu or /help.")
+
 def register_handlers(dispatcher):
     # Command handlers
     dispatcher.add_handler(CommandHandler("start", start))
