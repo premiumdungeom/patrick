@@ -22,31 +22,19 @@ pending_quiz = {}
 blind_box_timers = {}
 pending_reject_reason = {}
 
-# --- Weekly contest state ---
+airdrop_ptrst_state = {}  # {admin_id: {'step': 'amount'/'message', 'amount': int}}
+give_ton_state = {}       # {admin_id: {'step': 'username'/'amount', 'username': str}}
+
 weekly_contest_leaderboard = []
 weekly_contest_last_update = 0
 weekly_contest_week = None
 weekly_prize_usd = 40000
 weekly_prize_ton = 0  # This should be set according to TON price or by admin
 
-# --- Prize structure ---
-def get_weekly_prizes():
-    prizes = {
-        1: 500, 2: 350, 3: 250, 4: 200, 5: 150,
-        6: 100, 7: 90, 8: 80, 9: 70, 10: 60
-    }
-    for i in range(11, 51):
-        prizes[i] = 40
-    for i in range(51, 101):
-        prizes[i] = 20
-    for i in range(101, 251):
-        prizes[i] = 10
-    return prizes
-
 LANGUAGES = {"en": "English", "es": "Español"}
 
-def main_menu():
-    return ReplyKeyboardMarkup([
+def main_menu(user_id=None):
+    kb = [
         [f"{EMOJIS['new_task']} New Task", f"{EMOJIS['account']} Account", "📈 My Analytics"],
         [f"{EMOJIS['ptrst']} $PTRST", f"{EMOJIS['friends']} Friends", "🏆 Weekly Referral Contest"],
         [f"{EMOJIS['ton']} TON", f"{EMOJIS['about']} About", "🌳 My Referral Tree"],
@@ -54,13 +42,14 @@ def main_menu():
         ["🔔 Notifications", "🎁 Blind Box", "🎂 Set Birthday", "🎂 Claim Birthday Reward"],
         ["🧠 Quiz", "🆘 Help", "❓ FAQ"],
         ["🌐 Language", "🚏BACK"]
-    ], resize_keyboard=True)
+    ]
+    return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
 def admin_panel_keyboard():
     return ReplyKeyboardMarkup([
         [f"{EMOJIS['total_user']} Total User", f"{EMOJIS['total_payout']} Total Payout"],
         [f"{EMOJIS['broadcast']} Broadcast", f"{EMOJIS['set_new_task']} Set New Task"],
-        [f"💸 Airdrop $PTRST", "📊 Analytics"],
+        [f"💸 Airdrop $PTRST", "💵Give TON", "📊 Analytics"],
         ["🚏BACK"]
     ], resize_keyboard=True)
 
@@ -138,10 +127,7 @@ def admin(update: Update, context: CallbackContext):
     update.message.reply_text("💘 Admin Panel", reply_markup=admin_panel_keyboard())
 
 def show_main_menu(update: Update, context: CallbackContext, edit=False):
-    if hasattr(update, "message") and update.message:
-        update.message.reply_text("🏠 Main Menu", reply_markup=main_menu())
-    elif hasattr(update, "effective_message") and update.effective_message:
-        update.effective_message.reply_text("🏠 Main Menu", reply_markup=main_menu())
+    update.message.reply_text("🏠 Main Menu", reply_markup=main_menu(update.effective_user.id))
 
 def check_subscription(update: Update, context: CallbackContext):
     query = update.callback_query
@@ -198,9 +184,9 @@ def set_language(update: Update, context: CallbackContext):
     for k, v in LANGUAGES.items():
         if v == chosen:
             set_lang(update.effective_user.id, k)
-            update.message.reply_text(f"Language set to {v}.", reply_markup=main_menu())
+            update.message.reply_text(f"Language set to {v}.", reply_markup=main_menu(update.effective_user.id))
             return
-    update.message.reply_text("Unknown language.", reply_markup=main_menu())
+    update.message.reply_text("Unknown language.", reply_markup=main_menu(update.effective_user.id))
 
 def help_command(update: Update, context: CallbackContext):
     update.message.reply_text(
@@ -674,84 +660,21 @@ def analytics(update: Update, context: CallbackContext):
         msg += f"{i}. @{uname} - {refs} invited\n"
     update.message.reply_text(msg, parse_mode="HTML")
 
-def update_weekly_leaderboard(force=False):
-    global weekly_contest_leaderboard, weekly_contest_last_update, weekly_contest_week
-    now = int(time.time())
-    week = datetime.utcnow().isocalendar()[1]
-    if not force and now - weekly_contest_last_update < 600 and weekly_contest_week == week:
-        return
-    weekly_contest_last_update = now
-    weekly_contest_week = week
+def referral_contest_leaderboard(update: Update, context: CallbackContext):
     users = load_users()
+    week = datetime.utcnow().isocalendar()[1]
     scores = []
-    week_start = datetime.utcnow() - timedelta(days=datetime.utcnow().weekday())
-    week_start_ts = int(time.mktime(week_start.replace(hour=0, minute=0, second=0, microsecond=0).timetuple()))
     for uid, data in users.items():
         if isinstance(data, dict):
-            refs_this_week = [
-                r for r in data.get("referral_timestamps", [])
-                if "date" in r and int(datetime.strptime(r["date"], "%Y-%m-%d").timestamp()) >= week_start_ts
-            ]
-            scores.append((uid, len(refs_this_week)))
-    scores = sorted(scores, key=lambda x: -x[1])[:250]
-    weekly_contest_leaderboard = scores
-
-def payout_weekly_contest(context=None):
-    update_weekly_leaderboard(force=True)
-    prizes = get_weekly_prizes()
-    users = load_users()
-    ton_per_usd = weekly_prize_ton / weekly_prize_usd if weekly_prize_usd > 0 and weekly_prize_ton > 0 else 1
-    winners_info = []
-    for rank, (uid, refs) in enumerate(weekly_contest_leaderboard, 1):
-        user = get_user(uid)
-        prize_usd = prizes.get(rank, 0)
-        if prize_usd > 0:
-            prize_ton = round(prize_usd * ton_per_usd, 3)
-            update_balance(uid, "ton", prize_ton)
-            add_tx(uid, "Contest", prize_ton, f"Weekly Referral Contest Prize (Rank #{rank})")
-            winners_info.append(f"{rank}. @{user.get('username') or uid} - {prize_usd}$ ≈ {prize_ton} TON (refs: {refs})")
-    winners_msg = "🏆 Weekly Referral Contest Winners\n\n" + "\n".join(winners_info)
-    if context is not None:
-        for admin in ADMINS:
-            context.bot.send_message(admin, winners_msg)
-    return winners_msg
-
-def schedule_weekly_contest(bot):
-    def loop():
-        while True:
-            now = datetime.utcnow()
-            if now.weekday() == 6 and now.hour == 23 and now.minute >= 59:
-                payout_weekly_contest()
-                time.sleep(3600)
-            time.sleep(60)
-    t = threading.Thread(target=loop, daemon=True)
-    t.start()
-
-def referral_contest_leaderboard(update: Update, context: CallbackContext):
-    update_weekly_leaderboard()
-    prizes = get_weekly_prizes()
-    msg = (
-        "🏆 <b>Weekly Referral Contest</b>\n\n"
-        "Top 250 inviters win a share of $40,000 in TON every week!\n"
-        "Leaderboard updates every 10 minutes. The week resets every Monday (UTC).\n\n"
-    )
-    for rank, (uid, refs) in enumerate(weekly_contest_leaderboard, 1):
+            week_refs = [r for r in data.get("referral_timestamps", []) if datetime.strptime(r["date"], "%Y-%m-%d").isocalendar()[1] == week]
+            scores.append((uid, len(week_refs)))
+    scores = sorted(scores, key=lambda x: -x[1])[:10]
+    msg = "🏆 Weekly Referral Contest Leaderboard:\n"
+    for i, (uid, refs) in enumerate(scores, 1):
         user = get_user(uid)
         uname = user.get("username") or str(uid)
-        prize = prizes.get(rank, 0)
-        msg += f"{rank}. @{uname} - {refs} referrals"
-        if prize:
-            msg += f" | ${prize}"
-        msg += "\n"
-        if rank == 20:
-            msg += "...\n"
-            break
-    msg += "\n<b>Prize breakdown:</b>\n"
-    msg += "1st: $500, 2nd: $350, 3rd: $250, 4th: $200, 5th: $150\n"
-    msg += "6th: $100, 7th: $90, 8th: $80, 9th: $70, 10th: $60\n"
-    msg += "11-50: $40 | 51-100: $20 | 101-250: $10\n"
-    msg += "\nPrizes are paid in TON at the end of each week!"
-    update.message.reply_text(msg, parse_mode="HTML")
+        msg += f"{i}. @{uname} - {refs} new this week\n"
+    update.message.reply_text(msg)
 
 QUIZ_QUESTIONS = [
     {"q": "What is the symbol for TON?", "a": ["ton"]},
@@ -792,6 +715,7 @@ def user_analytics(update: Update, context: CallbackContext):
 def main_menu_router(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     txt = update.message.text.strip()
+
     if user_id in pending_reject_reason:
         return process_rejection_reason(update, context)
     if user_id in captcha_store:
@@ -813,7 +737,10 @@ def main_menu_router(update: Update, context: CallbackContext):
         return withdraw_request(update, context)
     if user_id in wallet_input_mode:
         return wallet_handler(update, context)
-
+    if user_id in airdrop_ptrst_state:
+        return handle_airdrop_ptrst(update, context)
+    if user_id in give_ton_state:
+        return handle_give_ton(update, context)
     if txt == f"{EMOJIS['new_task']} New Task":
         return new_task(update, context)
     elif txt == f"{EMOJIS['account']} Account":
@@ -874,9 +801,10 @@ def main_menu_router(update: Update, context: CallbackContext):
         return broadcast(update, context)
     elif txt == f"{EMOJIS['set_new_task']} Set New Task":
         return set_new_task(update, context)
-    elif txt == "💸 Airdrop $PTRST":
-        update.message.reply_text("Airdrop coming soon!")
-        return
+    elif txt == "💸 Airdrop $PTRST" and user_id in ADMINS:
+        return start_airdrop_ptrst(update, context)
+    elif txt == "💵Give TON" and user_id in ADMINS:
+        return start_give_ton(update, context)
     elif txt == "📊 Analytics":
         return analytics(update, context)
     elif txt == "/admin":
