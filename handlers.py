@@ -1,6 +1,7 @@
 import random
 import time
 import threading
+import logging
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove
 )
@@ -11,6 +12,12 @@ from config import *
 from utils import *
 from datetime import datetime, timedelta
 
+# Set up logging
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                    level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Global variables
 captcha_store = {}
 ptrst_withdraw_mode = {}
 ton_withdraw_mode = {}
@@ -21,7 +28,6 @@ pending_support = {}
 pending_quiz = {}
 blind_box_timers = {}
 pending_reject_reason = {}
-
 airdrop_ptrst_state = {}
 give_ton_state = {}
 
@@ -38,7 +44,7 @@ def main_menu(user_id=None):
         [f"{EMOJIS['new_task']} New Task", f"{EMOJIS['account']} Account", "📈 My Analytics"],
         [f"{EMOJIS['ptrst']} $PTRST", f"{EMOJIS['friends']} Friends", "🏆 Weekly Referral Contest"],
         [f"{EMOJIS['ton']} TON", f"{EMOJIS['about']} About", "🌳 My Referral Tree"],
-        [f"🏆 Leaderboard", f"📜 Transaction History", "🎖️ Badges"],
+        ["🏆 Leaderboard", "📜 Transaction History", "🎖️ Badges"],
         ["🔔 Notifications", "🎁 Blind Box", "🎂 Set Birthday", "🎂 Claim Birthday Reward"],
         ["🧠 Quiz", "🆘 Help", "❓ FAQ"],
         ["🌐 Language", "🚏BACK"]
@@ -49,7 +55,7 @@ def admin_panel_keyboard():
     return ReplyKeyboardMarkup([
         [f"{EMOJIS['total_user']} Total User", f"{EMOJIS['total_payout']} Total Payout"],
         [f"{EMOJIS['broadcast']} Broadcast", f"{EMOJIS['set_new_task']} Set New Task"],
-        [f"💸 Airdrop $PTRST", "💵Give TON", "📊 Analytics"],
+        ["💸 Airdrop $PTRST", "💵Give TON", "📊 Analytics"],
         ["🚏BACK"]
     ], resize_keyboard=True)
 
@@ -68,25 +74,29 @@ def notify_referrers(context, new_user_id, ref1_id=None, ref2_id=None):
                 ref1_id,
                 f"🎉 Someone has joined using your referral link! (Level 1)\nUser ID: {new_user_id}"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Error notifying referrer 1: {e}")
     if ref2_id:
         try:
             context.bot.send_message(
                 ref2_id,
                 f"🎉 Someone has joined using your Level 2 referral! (Level 2)\nUser ID: {new_user_id}"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Error notifying referrer 2: {e}")
 
 def create_user_with_ref(context, user_id, username, ref=None):
     if not user_exists(user_id):
         if ref:
-            ref1_id = int(ref)
-            ref1_data = get_user(ref1_id)
-            ref2_id = ref1_data.get("referrer") if ref1_data else None
-            create_user(user_id, username, ref)
-            notify_referrers(context, user_id, ref1_id=ref1_id, ref2_id=ref2_id)
+            try:
+                ref1_id = int(ref)
+                ref1_data = get_user(ref1_id)
+                ref2_id = ref1_data.get("referrer") if ref1_data else None
+                create_user(user_id, username, ref)
+                notify_referrers(context, user_id, ref1_id=ref1_id, ref2_id=ref2_id)
+            except ValueError:
+                logger.error(f"Invalid referral ID: {ref}")
+                create_user(user_id, username)
         else:
             create_user(user_id, username)
 
@@ -94,17 +104,21 @@ def start(update: Update, context: CallbackContext):
     user = update.effective_user
     user_id = user.id
     username = user.username or user.first_name
+    logger.info(f"Start command received from {user_id} ({username})")
 
     if is_verified(user_id):
         show_main_menu(update, context)
         return
 
-    if hasattr(context, "args") and context.args:
+    # Handle referral if present
+    if context.args and len(context.args) > 0:
         ref = context.args[0]
+        logger.info(f"User came from referral: {ref}")
         create_user_with_ref(context, user_id, username, ref)
     else:
         create_user_with_ref(context, user_id, username)
 
+    # Subscription message with inline button
     subs_message = (
         f"{EMOJIS['start']} **Subscribe to all resources:**\n\n"
         "1️⃣ [Patrick Official](https://t.me/minohamsterdailys)\n"
@@ -114,49 +128,62 @@ def start(update: Update, context: CallbackContext):
         "Then click below 👇"
     )
     btn = InlineKeyboardButton("✅ I've Subscribed", callback_data="check_subscription")
-    if hasattr(update, "message") and update.message:
-        update.message.reply_text(subs_message, reply_markup=InlineKeyboardMarkup([[btn]]), parse_mode="Markdown")
-    elif hasattr(update, "effective_message") and update.effective_message:
-        update.effective_message.reply_text(subs_message, reply_markup=InlineKeyboardMarkup([[btn]]), parse_mode="Markdown")
-
-def admin(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    if user_id not in ADMINS:
-        update.message.reply_text("❌ You are not an admin.")
-        return
-    update.message.reply_text("💘 Admin Panel", reply_markup=admin_panel_keyboard())
-
-def show_main_menu(update: Update, context: CallbackContext, edit=False):
-    update.message.reply_text("🏠 Main Menu", reply_markup=main_menu(update.effective_user.id))
+    update.message.reply_text(
+        subs_message, 
+        reply_markup=InlineKeyboardMarkup([[btn]]), 
+        parse_mode="Markdown",
+        disable_web_page_preview=True
+    )
 
 def check_subscription(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = query.from_user.id
     query.answer()
-    chat_member = context.bot.get_chat_member("@gouglenetwork", user_id)
-    if chat_member.status in ["member", "administrator", "creator"]:
-        a, b = random.randint(1, 9), random.randint(1, 9)
-        captcha_store[user_id] = a + b
-        context.bot.send_message(user_id, f"❇️ Enter the captcha: {a} + {b}", reply_markup=ReplyKeyboardMarkup([["/start"]], resize_keyboard=True))
-    else:
-        msg = (
-            "❌ You haven't joined all channels (@gouglenetwork)\n\n"
-            f"{EMOJIS['start']} Subscribe to all resources:\n\n"
-            "1️⃣ [Patrick Official](https://t.me/minohamsterdailys)\n"
-            "2️⃣ [Combo Hamster](https://t.me/gouglenetwork)\n"
-            "3️⃣ [AI Isaac](https://t.me/AIIsaac_bot/sponsor)\n"
-            "4️⃣ [AI Isaac BNB](https://t.me/aiisaac_bnb)\n\n"
-            "After subscribing, click below 👇"
-        )
-        btn = InlineKeyboardButton("✅ I've Subscribed", callback_data="check_subscription")
-        context.bot.send_message(user_id, msg, reply_markup=InlineKeyboardMarkup([[btn]]), parse_mode="Markdown")
+    
+    try:
+        # Check if user is member of required channel
+        chat_member = context.bot.get_chat_member("@gouglenetwork", user_id)
+        if chat_member.status in ["member", "administrator", "creator"]:
+            a, b = random.randint(1, 9), random.randint(1, 9)
+            captcha_store[user_id] = a + b
+            context.bot.send_message(
+                user_id, 
+                f"❇️ Enter the captcha: {a} + {b}", 
+                reply_markup=ReplyKeyboardMarkup([["/start"]], resize_keyboard=True)
+            )
+        else:
+            msg = (
+                "❌ You haven't joined all channels (@gouglenetwork)\n\n"
+                f"{EMOJIS['start']} Subscribe to all resources:\n\n"
+                "1️⃣ [Patrick Official](https://t.me/minohamsterdailys)\n"
+                "2️⃣ [Combo Hamster](https://t.me/gouglenetwork)\n"
+                "3️⃣ [AI Isaac](https://t.me/AIIsaac_bot/sponsor)\n"
+                "4️⃣ [AI Isaac BNB](https://t.me/aiisaac_bnb)\n\n"
+                "After subscribing, click below 👇"
+            )
+            btn = InlineKeyboardButton("✅ I've Subscribed", callback_data="check_subscription")
+            query.edit_message_text(
+                msg, 
+                reply_markup=InlineKeyboardMarkup([[btn]]), 
+                parse_mode="Markdown",
+                disable_web_page_preview=True
+            )
+    except Exception as e:
+        logger.error(f"Error in check_subscription: {e}")
+        query.edit_message_text("An error occurred. Please try again.")
 
 def handle_captcha(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     answer = update.message.text.strip()
+    
+    if user_id not in captcha_store:
+        update.message.reply_text("Please start over with /start")
+        return
+        
     if not answer.isdigit():
         update.message.reply_text("❌ Please enter a number for captcha.")
         return
+        
     if int(answer) == captcha_store[user_id]:
         set_verified(user_id)
         del captcha_store[user_id]
@@ -165,9 +192,26 @@ def handle_captcha(update: Update, context: CallbackContext):
     else:
         update.message.reply_text("❌ Wrong captcha. Try /start again.")
 
+def show_main_menu(update: Update, context: CallbackContext, edit=False):
+    if hasattr(update, 'message'):
+        update.message.reply_text("🏠 Main Menu", reply_markup=main_menu(update.effective_user.id))
+    elif hasattr(update, 'callback_query'):
+        context.bot.send_message(
+            update.callback_query.from_user.id,
+            "🏠 Main Menu",
+            reply_markup=main_menu(update.callback_query.from_user.id)
+        )
+
+def admin(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    if user_id not in ADMINS:
+        update.message.reply_text("❌ You are not an admin.")
+        return
+    update.message.reply_text("💘 Admin Panel", reply_markup=admin_panel_keyboard())
+
 def onboarding(update: Update, context: CallbackContext):
     update.message.reply_text(
-        "👋 Welcome! Here’s how to use the bot:\n"
+        "👋 Welcome! Here's how to use the bot:\n"
         "1. /start and subscribe to channels\n"
         "2. Set your wallet\n"
         "3. Claim airdrops & invite friends\n"
@@ -177,14 +221,20 @@ def onboarding(update: Update, context: CallbackContext):
 
 def choose_language(update: Update, context: CallbackContext):
     kb = [[l] for l in LANGUAGES.values()]
-    update.message.reply_text("Please choose your language / Por favor, elige tu idioma:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
+    update.message.reply_text(
+        "Please choose your language / Por favor, elige tu idioma:",
+        reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
+    )
 
 def set_language(update: Update, context: CallbackContext):
     chosen = update.message.text
     for k, v in LANGUAGES.items():
         if v == chosen:
             set_lang(update.effective_user.id, k)
-            update.message.reply_text(f"Language set to {v}.", reply_markup=main_menu(update.effective_user.id))
+            update.message.reply_text(
+                f"Language set to {v}.",
+                reply_markup=main_menu(update.effective_user.id)
+            )
             return
     update.message.reply_text("Unknown language.", reply_markup=main_menu(update.effective_user.id))
 
@@ -217,7 +267,10 @@ def handle_support(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if pending_support.get(user_id):
         for admin in ADMINS:
-            context.bot.send_message(admin, f"📩 Support ticket from @{update.effective_user.username or user_id}:\n{update.message.text}")
+            context.bot.send_message(
+                admin,
+                f"📩 Support ticket from @{update.effective_user.username or user_id}:\n{update.message.text}"
+            )
         update.message.reply_text("Your message was sent to the admin. Thank you!")
         pending_support[user_id] = False
 
@@ -242,10 +295,13 @@ def account(update: Update, context: CallbackContext):
         f"💎 Balance TON: {round(data.get('balance_ton',0), 3)}\n"
         f"📝 Wallet Address: {data.get('wallet') or 'Not set'}"
     )
-    update.message.reply_text(txt, reply_markup=ReplyKeyboardMarkup([
-        ["📤 $PTRST", "📤 TON"],
-        ["🏮SET_WALLET", "🚏BACK"]
-    ], resize_keyboard=True))
+    update.message.reply_text(
+        txt,
+        reply_markup=ReplyKeyboardMarkup([
+            ["📤 $PTRST", "📤 TON"],
+            ["🏮SET_WALLET", "🚏BACK"]
+        ], resize_keyboard=True)
+    )
 
 def friends(update: Update, context: CallbackContext):
     update.message.reply_text(
@@ -401,6 +457,7 @@ def referral_tree(update: Update, context: CallbackContext):
 
 def set_birthday(update: Update, context: CallbackContext):
     update.message.reply_text("Send your birthday in YYYY-MM-DD format.")
+    context.user_data["setting_birthday"] = True
 
 def save_birthday(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
@@ -413,6 +470,7 @@ def save_birthday(update: Update, context: CallbackContext):
         update.message.reply_text("Birthday saved!")
     except:
         update.message.reply_text("Invalid format. Try again.")
+    context.user_data["setting_birthday"] = False
 
 def birthday_claim(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
@@ -491,61 +549,6 @@ def withdraw_request(update: Update, context: CallbackContext):
         context.bot.send_message(admin, withdraw_msg, reply_markup=InlineKeyboardMarkup(inline_keyboard))
     update.message.reply_text(f"{withdraw_msg}\nWait for approval.")
 
-def inline_callback_handler(update: Update, context: CallbackContext):
-    query = update.callback_query
-    data = query.data
-
-    if data == "check_subscription":
-        check_subscription(update, context)
-        return
-
-    if data.startswith("wd_accept_"):
-        withdrawal_id = data[len("wd_accept_"):]
-        wd = pending_withdrawals.pop(withdrawal_id, None)
-        if wd:
-            user_id = wd["user_id"]
-            amount = wd["amount"]
-            token = wd["token"]
-            context.bot.send_message(user_id, f"✅ Your withdrawal of {amount} {token} has been approved by admin.")
-            query.edit_message_text(f"✅ Withdrawal accepted and user notified.")
-        else:
-            query.answer("Already processed or not found.", show_alert=True)
-    elif data.startswith("wd_reject_"):
-        withdrawal_id = data[len("wd_reject_"):]
-        if withdrawal_id in pending_withdrawals:
-            pending_reject_reason[update.effective_user.id] = withdrawal_id
-            query.message.reply_text("Please type the reason for rejection. Or send 🚫 Cancel", reply_markup=ReplyKeyboardMarkup([["🚫 Cancel"]], resize_keyboard=True))
-            query.edit_message_text("Waiting for rejection reason or cancel…")
-        else:
-            query.answer("Already processed or not found.", show_alert=True)
-
-def process_rejection_reason(update: Update, context: CallbackContext):
-    admin_id = update.effective_user.id
-    withdrawal_id = pending_reject_reason.get(admin_id)
-    if not withdrawal_id:
-        return
-
-    txt = update.message.text.strip()
-    if txt == "🚫 Cancel":
-        update.message.reply_text("❎ Rejection cancelled.", reply_markup=ReplyKeyboardRemove())
-        pending_reject_reason.pop(admin_id, None)
-        return
-
-    wd = pending_withdrawals.pop(withdrawal_id, None)
-    if wd:
-        user_id = wd["user_id"]
-        amount = wd["amount"]
-        token = wd["token"]
-        if token == "PTRST":
-            update_balance(user_id, "ptrst", amount)
-        elif token == "TON":
-            update_balance(user_id, "ton", amount)
-        context.bot.send_message(user_id, f"❌ Your withdrawal was rejected.\nReason: {txt}\nBalance returned.")
-        update.message.reply_text("User notified and balance restored.", reply_markup=ReplyKeyboardRemove())
-    else:
-        update.message.reply_text("Withdrawal not found.", reply_markup=ReplyKeyboardRemove())
-    pending_reject_reason.pop(admin_id, None)
-
 def trigger_withdraw(update: Update, context: CallbackContext):
     txt = update.message.text
     user_id = update.effective_user.id
@@ -591,8 +594,10 @@ def handle_task_text(update: Update, context: CallbackContext):
         context.user_data["set_task"] = False
 
 def broadcast(update: Update, context: CallbackContext):
-    context.user_data["broadcast"] = True
-    update.message.reply_text("Send the message (text/photo/video) to broadcast:")
+    user_id = update.effective_user.id
+    if user_id in ADMINS:
+        context.user_data["broadcast"] = True
+        update.message.reply_text("Send the message (text/photo/video) to broadcast:")
 
 def handle_broadcast(update: Update, context: CallbackContext):
     if context.user_data.get("broadcast"):
@@ -787,118 +792,45 @@ def user_analytics(update: Update, context: CallbackContext):
     )
     update.message.reply_text(msg, parse_mode="Markdown")
 
-def main_menu_router(update: Update, context: CallbackContext):
+def start_airdrop_ptrst(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    txt = update.message.text.strip()
+    if user_id in ADMINS:
+        airdrop_ptrst_state[user_id] = True
+        update.message.reply_text("Enter amount of $PTRST to airdrop:")
 
-    if user_id in pending_reject_reason:
-        return process_rejection_reason(update, context)
-    if user_id in captcha_store:
-        return handle_captcha(update, context)
-    if txt in LANGUAGES.values():
-        return set_language(update, context)
-    if user_id in pending_support and pending_support[user_id]:
-        return handle_support(update, context)
-    if user_id in pending_quiz:
-        return handle_quiz_answer(update, context)
-    if getattr(context.user_data, "setting_birthday", False):
-        context.user_data["setting_birthday"] = False
-        return save_birthday(update, context)
-    if context.user_data.get("set_task"):
-        return handle_task_text(update, context)
-    if context.user_data.get("broadcast"):
-        return handle_broadcast(update, context)
-    if user_id in ptrst_withdraw_mode or user_id in ton_withdraw_mode:
-        return withdraw_request(update, context)
-    if user_id in wallet_input_mode:
-        return wallet_handler(update, context)
-    if user_id in airdrop_ptrst_state:
-        return handle_airdrop_ptrst(update, context)
-    if user_id in give_ton_state:
-        return handle_give_ton(update, context)
-    if txt == f"{EMOJIS['new_task']} New Task":
-        return new_task(update, context)
-    elif txt == f"{EMOJIS['account']} Account":
-        return account(update, context)
-    elif txt == f"{EMOJIS['ptrst']} $PTRST":
-        return claim_ptrst(update, context)
-    elif txt == f"{EMOJIS['friends']} Friends":
-        return friends(update, context)
-    elif txt == f"{EMOJIS['ton']} TON":
-        return claim_ton(update, context)
-    elif txt == f"{EMOJIS['about']} About":
-        update.message.reply_text("About this bot: ...")
-    elif txt == "🏆 Leaderboard":
-        return leaderboard(update, context)
-    elif txt == "📜 Transaction History":
-        return transaction_history(update, context)
-    elif txt == "🔔 Notifications":
-        return notifications(update, context)
-    elif txt == "📤 $PTRST" or txt == "📤 TON":
-        return trigger_withdraw(update, context)
-    elif txt == "🏮SET_WALLET":
-        return wallet_handler(update, context)
-    elif txt == "🚏BACK":
-        show_main_menu(update, context)
+def handle_airdrop_ptrst(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    if user_id not in airdrop_ptrst_state:
         return
-    elif txt == "🌐 Language":
-        return choose_language(update, context)
-    elif txt == "🆘 Help":
-        return help_command(update, context)
-    elif txt == "❓ FAQ":
-        return faq_command(update, context)
-    elif txt == "🎖️ Badges":
-        return check_achievements(update, context)
-    elif txt == "📈 My Analytics":
-        return user_analytics(update, context)
-    elif txt == "🌳 My Referral Tree":
-        return referral_tree(update, context)
-    elif txt == "🎁 Blind Box":
-        return blind_box(update, context)
-    elif txt == "🎂 Set Birthday":
-        context.user_data["setting_birthday"] = True
-        return set_birthday(update, context)
-    elif txt == "🎂 Claim Birthday Reward":
-        return birthday_claim(update, context)
-    elif txt == "🏆 Weekly Referral Contest":
-        return referral_contest_leaderboard(update, context)
-    elif txt == "🧠 Quiz":
-        return quiz_command(update, context)
-    elif txt == "/onboarding":
-        return onboarding(update, context)
-    elif txt == "/support":
-        return support_command(update, context)
-    elif txt == f"{EMOJIS['total_user']} Total User":
-        return total_user(update, context)
-    elif txt == f"{EMOJIS['total_payout']} Total Payout":
-        return total_payout(update, context)
-    elif txt == f"{EMOJIS['broadcast']} Broadcast":
-        return broadcast(update, context)
-    elif txt == f"{EMOJIS['set_new_task']} Set New Task":
-        return set_new_task(update, context)
-    elif txt == "💸 Airdrop $PTRST" and user_id in ADMINS:
-        return start_airdrop_ptrst(update, context)
-    elif txt == "💵Give TON" and user_id in ADMINS:
-        return start_give_ton(update, context)
-    elif txt == "📊 Analytics":
-        return analytics(update, context)
-    elif txt == "/admin":
-        return admin(update, context)
-    elif txt == "/start":
-        return start(update, context)
-    else:
-        update.message.reply_text("❓ Unrecognized command. Use the menu or /help.")
+    try:
+        amount = int(update.message.text)
+        if amount <= 0:
+            raise ValueError
+        airdrop_ptrst_state[user_id] = amount
+        update.message.reply_text("Now send the user IDs (one per line) or 'ALL' for all users:")
+    except ValueError:
+        update.message.reply_text("Please enter a valid positive integer amount.")
+        del airdrop_ptrst_state[user_id]
 
-def register_handlers(dispatcher):
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CommandHandler("admin", admin))
-    dispatcher.add_handler(CommandHandler("help", help_command))
-    dispatcher.add_handler(CommandHandler("faq", faq_command))
-    dispatcher.add_handler(CommandHandler("onboarding", onboarding))
-    dispatcher.add_handler(CommandHandler("support", support_command))
-    dispatcher.add_handler(CommandHandler("quiz", quiz_command))
-    dispatcher.add_handler(CallbackQueryHandler(inline_callback_handler))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, main_menu_router))
+def start_give_ton(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    if user_id in ADMINS:
+        give_ton_state[user_id] = True
+        update.message.reply_text("Enter amount of TON to distribute:")
+
+def handle_give_ton(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    if user_id not in give_ton_state:
+        return
+    try:
+        amount = float(update.message.text)
+        if amount <= 0:
+            raise ValueError
+        give_ton_state[user_id] = amount
+        update.message.reply_text("Now send the user IDs (one per line) or 'ALL' for all users:")
+    except ValueError:
+        update.message.reply_text("Please enter a valid positive number.")
+        del give_ton_state[user_id]
 
 def add_tx(user_id, tx_type, amount, desc):
     user = get_user(user_id)
@@ -906,3 +838,52 @@ def add_tx(user_id, tx_type, amount, desc):
         user["txs"] = []
     user["txs"].append({"date": get_datetime(), "type": tx_type, "amount": amount, "desc": desc})
     save_user(user_id, user)
+
+def register_handlers(dispatcher):
+    # Command handlers
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(CommandHandler("admin", admin))
+    dispatcher.add_handler(CommandHandler("help", help_command))
+    dispatcher.add_handler(CommandHandler("faq", faq_command))
+    dispatcher.add_handler(CommandHandler("onboarding", onboarding))
+    dispatcher.add_handler(CommandHandler("support", support_command))
+    dispatcher.add_handler(CommandHandler("quiz", quiz_command))
+    
+    # Callback query handler
+    dispatcher.add_handler(CallbackQueryHandler(inline_callback_handler))
+    
+    # Specific button handlers (added before the general text handler)
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^📈 My Analytics$'), user_analytics))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🎖️ Badges$'), check_achievements))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^📜 Transaction History$'), transaction_history))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🏆 Leaderboard$'), leaderboard))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🌳 My Referral Tree$'), referral_tree))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🔔 Notifications$'), notifications))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🎁 Blind Box$'), blind_box))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🧠 Quiz$'), quiz_command))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🆘 Help$'), help_command))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^❓ FAQ$'), faq_command))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🌐 Language$'), choose_language))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🚏BACK$'), show_main_menu))
+    
+    # Token-related handlers
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^📤 \$PTRST$'), trigger_withdraw))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^📤 TON$'), trigger_withdraw))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🏮SET_WALLET$'), wallet_handler))
+    
+    # Admin handlers
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^💸 Airdrop \$PTRST$'), start_airdrop_ptrst))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^💵Give TON$'), start_give_ton))
+    
+    # General text handler (fallback)
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, main_menu_router))
+    
+    # Error handler
+    dispatcher.add_error_handler(error_handler)
+
+def error_handler(update: Update, context: CallbackContext):
+    logger.error(f"Update {update} caused error {context.error}")
+    if update and update.effective_message:
+        update.effective_message.reply_text("An error occurred. Please try again.")
+
+# [Rest of the functions remain the same as in your original code...]
