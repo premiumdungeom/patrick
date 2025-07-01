@@ -193,18 +193,30 @@ def handle_captcha(update: Update, context: CallbackContext):
     if int(answer) == captcha_store[user_id]:
         set_verified(user_id)
         del captcha_store[user_id]
-        update.message.reply_text("✅ Verified! Welcome!")
+        update.message.reply_text(
+            "👑 Participate in Airdrop 100,000,000 $PTRST\n\n"
+            "🚧 Invite your friends and get:\n"
+            "For level 1 - 150 $PTRST\n"
+            "For level 2 - 75 $PTRST\n\n"
+            "👑 Collect the bonus $PTRST every 30 minutes and get 1000 $PTRST.\n"
+            "Every time your friend picks up the bonus you will get 25% of the amount\n\n"
+            "💎 Collect TON bonus every 8 hours and get up to 0.070 TON.\n"
+            "Every time your friend picks up the bonus you will get 25% of the amount\n\n"
+            "🗓️Listing $PTRST on AUGUST 1ST at 16:00 (UTC+3)\n\n"
+            "🏆The more $PTRST you have, the more you will earn from the listing\n\n"
+            "🔥All unallocated $PTRST will be burned, which will add to the price of $PTRST"
+      )
         show_main_menu(update, context)
     else:
         update.message.reply_text("❌ Wrong captcha. Try /start again.")
 
 def show_main_menu(update: Update, context: CallbackContext, edit=False):
     if hasattr(update, 'message'):
-        update.message.reply_text("🏠 Main Menu", reply_markup=main_menu(update.effective_user.id))
+        update.message.reply_text("🎁 9 FREE NFT GIFTS🎁 [9 FREE NFT GIFTS](https://x.com/Megabolly", reply_markup=main_menu(update.effective_user.id))
     elif hasattr(update, 'callback_query'):
         context.bot.send_message(
             update.callback_query.from_user.id,
-            "🏠 Main Menu",
+            "💎 [Click here](https://t.me/pengu_clash_bot?start=invite-fvhgw8) (Bonus 0.027 TON)",
             reply_markup=main_menu(update.callback_query.from_user.id)
         )
 
@@ -248,7 +260,6 @@ def help_command(update: Update, context: CallbackContext):
     update.message.reply_text(
         "🆘 *Help*\n"
         "- Use the main menu to claim, invite, withdraw, and more.\n"
-        "- Use /faq for answers to common questions.\n"
         "- Use /support to contact the admin.",
         parse_mode="Markdown"
     )
@@ -314,7 +325,7 @@ def friends(update: Update, context: CallbackContext):
         "🚧 Invite your friends and get $PTRST:\n"
         "1️⃣ Level - 150 $PTRST\n"
         "2️⃣ Level - 75 $PTRST\n\n"
-        f"https://t.me/patricxst_bot?start={update.effective_user.id}"
+        f"https://t.me/ptrstr_bot?start={update.effective_user.id}"
     )
 
 def leaderboard(update: Update, context: CallbackContext):
