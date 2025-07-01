@@ -776,14 +776,13 @@ def user_analytics(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     data = get_user(user_id)
     msg = (
-        f"📈 *Your Analytics*
-"
-        f"Total $PTRST earned: {sum([tx['amount'] for tx in data.get('txs', []) if tx['type']=='Airdrop'])}\n"
-        f"Referrals level 1: {len(data.get('referrals_lvl1', []))}\n"
-        f"Referrals level 2: {len(data.get('referrals_lvl2', []))}\n"
-        f"Daily streak: {data.get('daily_streak', 0)}\n"
-        f"Badges: {', '.join([f'{b} ({n})' if n > 1 else b for b, n in data.get('badges', {}).items()]) if data.get('badges', {}) else 'None'}"
-    )
+    f"📈 *Your Analytics*\n"
+    f"Total $PTRST earned: {sum([tx['amount'] for tx in data.get('txs', []) if tx['type']=='Airdrop'])}\n"
+    f"Referrals level 1: {len(data.get('referrals_lvl1', []))}\n"
+    f"Referrals level 2: {len(data.get('referrals_lvl2', []))}\n"
+    f"Daily streak: {data.get('daily_streak', 0)}\n"
+    f"Badges: {', '.join([f'{b} ({n})' if n > 1 else b for b, n in data.get('badges', {}).items()]) if data.get('badges', {}) else 'None'}"
+)
     update.message.reply_text(msg, parse_mode="Markdown", reply_markup=analytics_menu())
 
 def start_airdrop_ptrst(update: Update, context: CallbackContext):
