@@ -892,26 +892,23 @@ def main_menu_router(update: Update, context: CallbackContext):
     if user_id in captcha_store:
         return handle_captcha(update, context)
     if txt in LANGUAGES.values():
-        return set_language(update, context)
+        return  # language was removed
     if user_id in pending_support and pending_support[user_id]:
         return handle_support(update, context)
-    if user_id in pending_quiz:
-        return handle_quiz_answer(update, context)
-    if context.user_data.get("setting_birthday", False):
-        context.user_data["setting_birthday"] = False
-        return save_birthday(update, context)
     if context.user_data.get("set_task"):
         return handle_task_text(update, context)
     if context.user_data.get("broadcast"):
         return handle_broadcast(update, context)
-    if user_id in ptrst_withdraw_mode or user_id in ton_withdraw_mode:
-        return withdraw_request(update, context)
     if user_id in wallet_input_mode:
         return wallet_handler(update, context)
     if user_id in airdrop_ptrst_state:
         return handle_airdrop_ptrst(update, context)
     if user_id in give_ton_state:
         return handle_give_ton(update, context)
+
+    # ✅ Always clear withdraw state if user taps anything else
+    ptrst_withdraw_mode.pop(user_id, None)
+    ton_withdraw_mode.pop(user_id, None)
 
     # Main menu button handlers
     if txt == f"{EMOJIS['new_task']} New Task":
@@ -971,7 +968,7 @@ def main_menu_router(update: Update, context: CallbackContext):
     elif txt == "/start":
         return start(update, context)
     else:
-        update.message.reply_text("❓ Unrecognized command. Use the menu or /help.")
+        update.message.reply_text("❓ Unrecognized command. Use the menu or /start.")
 
 def register_handlers(dispatcher):
     # Command handlers
