@@ -212,7 +212,7 @@ def handle_captcha(update: Update, context: CallbackContext):
 
 def show_main_menu(update: Update, context: CallbackContext, edit=False):
     if hasattr(update, 'message'):
-        update.message.reply_text("🎁 9 FREE NFT GIFTS🎁 [9 FREE NFT GIFTS](https://x.com/Megabolly)", reply_markup=main_menu(update.effective_user.id))
+        update.message.reply_text("🙉 [9 FREE NFT GIFTS](https://x.com/Megabolly)", reply_markup=main_menu(update.effective_user.id))
     elif hasattr(update, 'callback_query'):
         context.bot.send_message(
             update.callback_query.from_user.id,
@@ -576,10 +576,18 @@ def trigger_withdraw(update: Update, context: CallbackContext):
 
     if txt == "📤 $PTRST":
         ptrst_withdraw_mode[user_id] = True
-        update.message.reply_text("Enter amount to withdraw in $PTRST:")
+        update.message.reply_text("Enter amount to withdraw in $PTRST:", reply_markup=ReplyKeyboardRemove())
     elif txt == "📤 TON":
         ton_withdraw_mode[user_id] = True
-        update.message.reply_text("Enter amount to withdraw in TON:")
+        update.message.reply_text("Enter amount to withdraw in TON:", reply_markup=ReplyKeyboardRemove())
+
+def handle_withdraw_amount(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    txt = update.message.text
+    
+    if user_id in ptrst_withdraw_mode or user_id in ton_withdraw_mode:
+        return withdraw_request(update, context)
+    return None
 
 def wallet_handler(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
@@ -799,42 +807,94 @@ def user_analytics(update: Update, context: CallbackContext):
 def start_airdrop_ptrst(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if user_id in ADMINS:
-        airdrop_ptrst_state[user_id] = True
-        update.message.reply_text("Enter amount of $PTRST to airdrop:")
+        airdrop_ptrst_state[user_id] = "amount"
+        update.message.reply_text("Enter amount of $PTRST to airdrop to user:", reply_markup=ReplyKeyboardRemove())
 
 def handle_airdrop_ptrst(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if user_id not in airdrop_ptrst_state:
         return
-    try:
-        amount = int(update.message.text)
-        if amount <= 0:
-            raise ValueError
-        airdrop_ptrst_state[user_id] = amount
-        update.message.reply_text("Now send the user IDs (one per line) or 'ALL' for all users:")
-    except ValueError:
-        update.message.reply_text("Please enter a valid positive integer amount.")
-        del airdrop_ptrst_state[user_id]
+    
+    if airdrop_ptrst_state[user_id] == "amount":
+        try:
+            amount = int(update.message.text)
+            if amount <= 0:
+                raise ValueError
+            context.user_data['airdrop_amount'] = amount
+            airdrop_ptrst_state[user_id] = "target"
+            update.message.reply_text("Enter the target user ID (numeric):")
+        except ValueError:
+            update.message.reply_text("Please enter a valid positive integer amount.")
+            del airdrop_ptrst_state[user_id]
+    elif airdrop_ptrst_state[user_id] == "target":
+        try:
+            target_id = int(update.message.text)
+            amount = context.user_data['airdrop_amount']
+            update_balance(target_id, "ptrst", amount)
+            add_tx(target_id, "Airdrop", amount, "Admin airdrop")
+            update.message.reply_text(
+                f"✅ Successfully sent {amount} $PTRST to user {target_id}",
+                reply_markup=admin_panel_keyboard()
+            )
+            del airdrop_ptrst_state[user_id]
+            del context.user_data['airdrop_amount']
+        except ValueError:
+            update.message.reply_text("Please enter a valid user ID (numbers only).")
+        except Exception as e:
+            update.message.reply_text(f"Error: {str(e)}")
+            del airdrop_ptrst_state[user_id]
+            if 'airdrop_amount' in context.user_data:
+                del context.user_data['airdrop_amount']
 
 def start_give_ton(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if user_id in ADMINS:
-        give_ton_state[user_id] = True
-        update.message.reply_text("Enter amount of TON to distribute:")
-
+        give_ton_state[user_id] = "amount"
+        update.message.reply_text("Enter amount of TON to send:", reply_markup=ReplyKeyboardRemove())
 def handle_give_ton(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if user_id not in give_ton_state:
         return
-    try:
-        amount = float(update.message.text)
-        if amount <= 0:
-            raise ValueError
-        give_ton_state[user_id] = amount
-        update.message.reply_text("Now send the user IDs (one per line) or 'ALL' for all users:")
-    except ValueError:
-        update.message.reply_text("Please enter a valid positive number.")
-        del give_ton_state[user_id]
+    
+    if give_ton_state[user_id] == "amount":
+        try:
+            amount = float(update.message.text)
+            if amount <= 0:
+                raise ValueError
+            context.user_data['give_ton_amount'] = amount
+            give_ton_state[user_id] = "target"
+            update.message.reply_text("Enter the target username (e.g., @premiumdungeon):")
+        except ValueError:
+            update.message.reply_text("Please enter a valid positive number.")
+            del give_ton_state[user_id]
+    elif give_ton_state[user_id] == "target":
+        try:
+            username = update.message.text.strip().lstrip('@')
+            # Find user by username
+            users = load_users()
+            target_id = None
+            for uid, data in users.items():
+                if isinstance(data, dict) and data.get('username', '').lower() == username.lower():
+                    target_id = uid
+                    break
+            
+            if not target_id:
+                raise ValueError("User not found")
+                
+            amount = context.user_data['give_ton_amount']
+            update_balance(target_id, "ton", amount)
+            add_tx(target_id, "Airdrop", amount, "Admin TON gift")
+            update.message.reply_text(
+                f"✅ Successfully sent {amount} TON to @{username}",
+                reply_markup=admin_panel_keyboard()
+            )
+            del give_ton_state[user_id]
+            del context.user_data['give_ton_amount']
+        except Exception as e:
+            update.message.reply_text(f"Error: {str(e)}")
+            del give_ton_state[user_id]
+            if 'give_ton_amount' in context.user_data:
+                del context.user_data['give_ton_amount']
 
 def inline_callback_handler(update: Update, context: CallbackContext):
     query = update.callback_query
@@ -887,12 +947,16 @@ def main_menu_router(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     txt = update.message.text.strip()
 
+    # Check withdraw modes first
+    if user_id in ptrst_withdraw_mode or user_id in ton_withdraw_mode:
+        return withdraw_request(update, context)
+        
     if user_id in pending_reject_reason:
         return process_rejection_reason(update, context)
     if user_id in captcha_store:
         return handle_captcha(update, context)
     if txt in LANGUAGES.values():
-        return  # language was removed
+        return set_language(update, context)
     if user_id in pending_support and pending_support[user_id]:
         return handle_support(update, context)
     if context.user_data.get("set_task"):
@@ -905,10 +969,8 @@ def main_menu_router(update: Update, context: CallbackContext):
         return handle_airdrop_ptrst(update, context)
     if user_id in give_ton_state:
         return handle_give_ton(update, context)
-
-    # ✅ Always clear withdraw state if user taps anything else
-    ptrst_withdraw_mode.pop(user_id, None)
-    ton_withdraw_mode.pop(user_id, None)
+    if context.user_data.get("setting_birthday"):
+        return save_birthday(update, context)
 
     # Main menu button handlers
     if txt == f"{EMOJIS['new_task']} New Task":
@@ -922,7 +984,14 @@ def main_menu_router(update: Update, context: CallbackContext):
     elif txt == f"{EMOJIS['ton']} TON":
         return claim_ton(update, context)
     elif txt == f"{EMOJIS['about']} About":
-        update.message.reply_text("About this bot: ...")
+        update.message.reply_text(
+            "🔹 PTRST Airdrop Bot\n\n"
+            "Earn $PTRST tokens by completing tasks and inviting friends!\n\n"
+            "Official links:\n"
+            "Website: https://ptrst.io\n"
+            "Twitter: https://twitter.com/ptrst_token\n"
+            "Telegram: https://t.me/ptrst_official"
+        )
     elif txt == "📜 Transaction History":
         return transaction_history(update, context)
     elif txt == "🏆 Leaderboard":
@@ -967,9 +1036,16 @@ def main_menu_router(update: Update, context: CallbackContext):
         return admin(update, context)
     elif txt == "/start":
         return start(update, context)
+    elif txt == "/language":
+        return choose_language(update, context)
+    elif txt == "/birthday":
+        return set_birthday(update, context)
+    elif txt == "/birthday_claim":
+        return birthday_claim(update, context)
+    elif txt == "/faq":
+        return faq_command(update, context)
     else:
         update.message.reply_text("❓ Unrecognized command. Use the menu or /start.")
-
 def register_handlers(dispatcher):
     # Command handlers
     dispatcher.add_handler(CommandHandler("start", start))
@@ -977,11 +1053,18 @@ def register_handlers(dispatcher):
     dispatcher.add_handler(CommandHandler("help", help_command))
     dispatcher.add_handler(CommandHandler("onboarding", onboarding))
     dispatcher.add_handler(CommandHandler("support", support_command))
+    dispatcher.add_handler(CommandHandler("language", choose_language))
+    dispatcher.add_handler(CommandHandler("birthday", set_birthday))
+    dispatcher.add_handler(CommandHandler("birthday_claim", birthday_claim))
+    dispatcher.add_handler(CommandHandler("faq", faq_command))
     
     # Callback query handler
     dispatcher.add_handler(CallbackQueryHandler(inline_callback_handler))
     
     # Specific button handlers (added before the general text handler)
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^📤 \$PTRST$'), trigger_withdraw))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^📤 TON$'), trigger_withdraw))
+    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🏮SET_WALLET$'), wallet_handler))
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^📈 My Analytics$'), user_analytics))
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^🎖️ Badges$'), check_achievements))
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^📜 Transaction History$'), transaction_history))
@@ -990,25 +1073,40 @@ def register_handlers(dispatcher):
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^🔔 Notifications$'), notifications))
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^🎁 Blind Box$'), blind_box))
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^🚏BACK$'), show_main_menu))
-    
-    # Token-related handlers
-    dispatcher.add_handler(MessageHandler(Filters.regex(r'^📤 \$PTRST$'), trigger_withdraw))
-    dispatcher.add_handler(MessageHandler(Filters.regex(r'^📤 TON$'), trigger_withdraw))
-    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🏮SET_WALLET$'), wallet_handler))
-    
-    # Admin handlers
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^💸 Airdrop \$PTRST$'), start_airdrop_ptrst))
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^💵Give TON$'), start_give_ton))
+    
+    # Withdraw amount handler
+    dispatcher.add_handler(MessageHandler(
+        Filters.text & ~Filters.command & 
+        (Filters.user(ptrst_withdraw_mode.keys()) | Filters.user(ton_withdraw_mode.keys())),
+        withdraw_request
+    ))
+    
+    # Airdrop and Give TON handlers
+    dispatcher.add_handler(MessageHandler(
+        Filters.text & ~Filters.command & Filters.user(airdrop_ptrst_state.keys()),
+        handle_airdrop_ptrst
+    ))
+    dispatcher.add_handler(MessageHandler(
+        Filters.text & ~Filters.command & Filters.user(give_ton_state.keys()),
+        handle_give_ton
+    ))
+    
+    # Birthday handler
+    dispatcher.add_handler(MessageHandler(
+        Filters.text & Filters.user({uid for uid, data in context.user_data.items() if data.get("setting_birthday")}),
+        save_birthday
+    ))
+    
+    # Language selection handler
+    dispatcher.add_handler(MessageHandler(
+        Filters.text & Filters.regex(f"^({'|'.join(LANGUAGES.values())})$"),
+        set_language
+    ))
     
     # General text handler (fallback)
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, main_menu_router))
     
     # Error handler
     dispatcher.add_error_handler(error_handler)
-
-def error_handler(update: Update, context: CallbackContext):
-    logger.error(f"Update {update} caused error {context.error}")
-    if update and update.effective_message:
-        update.effective_message.reply_text("An error occurred. Please try again.")
-
-# [Rest of the functions remain the same as in your original code...]
