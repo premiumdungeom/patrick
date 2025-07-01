@@ -11,7 +11,7 @@ from telegram.ext import (
 from config import *
 from utils import *
 from datetime import datetime, timedelta
-import user_exists, load_users
+from utils import user_exists, load_users
 
 # Set up logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
