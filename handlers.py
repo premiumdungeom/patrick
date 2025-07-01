@@ -42,11 +42,8 @@ LANGUAGES = {"en": "English", "es": "Español"}
 def main_menu(user_id=None):
     kb = [
         [f"{EMOJIS['new_task']} New Task", f"{EMOJIS['account']} Account", "📈 My Analytics"],
-        [f"{EMOJIS['ptrst']} $PTRST", f"{EMOJIS['friends']} Friends", "🏆 Weekly Referral Contest"],
-        [f"{EMOJIS['ton']} TON", f"{EMOJIS['about']} About", "🌳 My Referral Tree"],
-        ["🏆 Leaderboard", "📜 Transaction History", "🎖️ Badges"],
-        ["🔔 Notifications", "🎁 Blind Box"],
-        ["🚏BACK"]
+        [f"{EMOJIS['ptrst']} $PTRST", f"{EMOJIS['friends']} Friends", f"{EMOJIS['ton']} TON"],
+        [f"{EMOJIS['about']} About"]
     ]
     return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
@@ -57,6 +54,16 @@ def admin_panel_keyboard():
         ["💸 Airdrop $PTRST", "💵Give TON", "📊 Analytics"],
         ["🚏BACK"]
     ], resize_keyboard=True)
+
+def analytics_menu():
+    kb = [
+        ["📜 Transaction History", "🏆 Leaderboard"],
+        ["🎁 Blind Box", "🎖️ Badges"],
+        ["🔔 Notifications", "🌳 My Referral Tree"],
+        ["🔥 Final Invite Rush"],
+        ["🚏BACK"]
+    ]
+    return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
 def is_verified(user_id):
     return get_user(user_id).get("verified", False)
@@ -737,10 +744,15 @@ def schedule_weekly_contest(bot):
 def referral_contest_leaderboard(update: Update, context: CallbackContext):
     update_weekly_leaderboard()
     prizes = get_weekly_prizes()
+    now = datetime.utcnow()
+    deadline = datetime(2025, 8, 1)
+    days_left = (deadline - now).days
+
     msg = (
-        "🏆 <b>Weekly Referral Contest</b>\n\n"
-        "Top 250 inviters win a share of $40,000 in TON every week!\n"
-        "Leaderboard updates every 10 minutes. The week resets every Monday (UTC).\n\n"
+        f"🔥 <b>Final Invite Rush</b>\n\n"
+        f"Top 250 inviters share $10,000 in TON by <b>August 1, 2025</b>!\n"
+        f"<i>{days_left} days left!</i>\n\n"
+        f"Leaderboard updates every 10 minutes.\n\n"
     )
     for rank, (uid, refs) in enumerate(weekly_contest_leaderboard, 1):
         user = get_user(uid)
@@ -757,44 +769,22 @@ def referral_contest_leaderboard(update: Update, context: CallbackContext):
     msg += "1st: $500, 2nd: $350, 3rd: $250, 4th: $200, 5th: $150\n"
     msg += "6th: $100, 7th: $90, 8th: $80, 9th: $70, 10th: $60\n"
     msg += "11-50: $40 | 51-100: $20 | 101-250: $10\n"
-    msg += "\nPrizes are paid in TON at the end of each week!"
+    msg += "\nPrizes paid in TON at the end of the event!"
     update.message.reply_text(msg, parse_mode="HTML")
-
-QUIZ_QUESTIONS = [
-    {"q": "What is the symbol for TON?", "a": ["ton"]},
-    {"q": "How many levels of referral rewards are there?", "a": ["2", "two"]},
-]
-
-def quiz_command(update: Update, context: CallbackContext):
-    q = random.choice(QUIZ_QUESTIONS)
-    pending_quiz[update.effective_user.id] = q
-    update.message.reply_text(f"Quiz time!\n{q['q']}")
-
-def handle_quiz_answer(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
-    if user_id not in pending_quiz:
-        return
-    answer = update.message.text.strip().lower()
-    q = pending_quiz[user_id]
-    if answer in q["a"]:
-        update_balance(user_id, "ptrst", 100)
-        update.message.reply_text("Correct! You win 100 $PTRST.")
-        del pending_quiz[user_id]
-    else:
-        update.message.reply_text("Incorrect. Try again!")
 
 def user_analytics(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     data = get_user(user_id)
     msg = (
-        f"📈 *Your Analytics*\n"
+        f"📈 *Your Analytics*
+"
         f"Total $PTRST earned: {sum([tx['amount'] for tx in data.get('txs', []) if tx['type']=='Airdrop'])}\n"
         f"Referrals level 1: {len(data.get('referrals_lvl1', []))}\n"
         f"Referrals level 2: {len(data.get('referrals_lvl2', []))}\n"
         f"Daily streak: {data.get('daily_streak', 0)}\n"
         f"Badges: {', '.join([f'{b} ({n})' if n > 1 else b for b, n in data.get('badges', {}).items()]) if data.get('badges', {}) else 'None'}"
     )
-    update.message.reply_text(msg, parse_mode="Markdown")
+    update.message.reply_text(msg, parse_mode="Markdown", reply_markup=analytics_menu())
 
 def start_airdrop_ptrst(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
@@ -923,28 +913,28 @@ def main_menu_router(update: Update, context: CallbackContext):
         return claim_ton(update, context)
     elif txt == f"{EMOJIS['about']} About":
         update.message.reply_text("About this bot: ...")
-    elif txt == "🏆 Leaderboard":
-        return leaderboard(update, context)
     elif txt == "📜 Transaction History":
         return transaction_history(update, context)
+    elif txt == "🏆 Leaderboard":
+        return leaderboard(update, context)
+    elif txt == "🎁 Blind Box":
+        return blind_box(update, context)
+    elif txt == "🎖️ Badges":
+        return check_achievements(update, context)
     elif txt == "🔔 Notifications":
         return notifications(update, context)
+    elif txt == "🌳 My Referral Tree":
+        return referral_tree(update, context)
+    elif txt == "🔥 Final Invite Rush":
+        return referral_contest_leaderboard(update, context)
+    elif txt == "🚏BACK":
+        return show_main_menu(update, context)
     elif txt == "📤 $PTRST" or txt == "📤 TON":
         return trigger_withdraw(update, context)
     elif txt == "🏮SET_WALLET":
         return wallet_handler(update, context)
-    elif txt == "🚏BACK":
-        return show_main_menu(update, context)
-    elif txt == "🎖️ Badges":
-        return check_achievements(update, context)
     elif txt == "📈 My Analytics":
         return user_analytics(update, context)
-    elif txt == "🌳 My Referral Tree":
-        return referral_tree(update, context)
-    elif txt == "🎁 Blind Box":
-        return blind_box(update, context)
-    elif txt == "🏆 Weekly Referral Contest":
-        return referral_contest_leaderboard(update, context)
     elif txt == "/onboarding":
         return onboarding(update, context)
     elif txt == "/support":
