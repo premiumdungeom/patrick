@@ -788,41 +788,81 @@ def user_analytics(update: Update, context: CallbackContext):
 def start_airdrop_ptrst(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if user_id in ADMINS:
-        airdrop_ptrst_state[user_id] = True
-        update.message.reply_text("Enter amount of $PTRST to airdrop:")
-
+        airdrop_ptrst_state[user_id] = {"step": "amount"}
+        update.message.reply_text("💸 Enter the amount of $PTRST to airdrop to all users:")
 def handle_airdrop_ptrst(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if user_id not in airdrop_ptrst_state:
         return
-    try:
-        amount = int(update.message.text)
-        if amount <= 0:
-            raise ValueError
-        airdrop_ptrst_state[user_id] = amount
-        update.message.reply_text("Now send the user IDs (one per line) or 'ALL' for all users:")
-    except ValueError:
-        update.message.reply_text("Please enter a valid positive integer amount.")
+    step_data = airdrop_ptrst_state[user_id]
+    step = step_data.get("step")
+
+    if step == "amount":
+        try:
+            amount = int(update.message.text.strip())
+            if amount <= 0:
+                raise ValueError
+            airdrop_ptrst_state[user_id] = {"step": "note", "amount": amount}
+            update.message.reply_text("📝 Now enter a short note to attach to this airdrop:")
+        except:
+            update.message.reply_text("❌ Invalid amount. Please enter a positive integer.")
+
+    elif step == "note":
+        note = update.message.text.strip()
+        amount = step_data["amount"]
+        users = load_users()
+        count = 0
+        for uid in users:
+            try:
+                update_balance(uid, "ptrst", amount)
+                add_tx(uid, "Airdrop", amount, f"Admin Airdrop: {note}")
+                context.bot.send_message(uid, f"💸 You received {amount} $PTRST!\n📝 Note: {note}")
+                count += 1
+            except:
+                continue
         del airdrop_ptrst_state[user_id]
+        update.message.reply_text(f"✅ Airdrop sent to {count} users.")
 
 def start_give_ton(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if user_id in ADMINS:
-        give_ton_state[user_id] = True
-        update.message.reply_text("Enter amount of TON to distribute:")
+        give_ton_state[user_id] = {"step": "username"}
+        update.message.reply_text("Enter the recipient's @username:")
 
 def handle_give_ton(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     if user_id not in give_ton_state:
         return
-    try:
-        amount = float(update.message.text)
-        if amount <= 0:
-            raise ValueError
-        give_ton_state[user_id] = amount
-        update.message.reply_text("Now send the user IDs (one per line) or 'ALL' for all users:")
-    except ValueError:
-        update.message.reply_text("Please enter a valid positive number.")
+    state = give_ton_state[user_id]
+    step = state.get("step")
+
+    if step == "username":
+        uname = update.message.text.strip().lstrip("@")
+        found = None
+        for uid, data in load_users().items():
+            if data.get("username", "").lower() == uname.lower():
+                found = uid
+                break
+        if not found:
+            update.message.reply_text("❌ Username not found in database.")
+            del give_ton_state[user_id]
+            return
+        give_ton_state[user_id] = {"step": "amount", "uid": found, "uname": uname}
+        update.message.reply_text(f"How much TON to send to @{uname}?")
+
+    elif step == "amount":
+        try:
+            amount = float(update.message.text.strip())
+            if amount <= 0:
+                raise ValueError
+            uid = state["uid"]
+            uname = state["uname"]
+            update_balance(uid, "ton", amount)
+            add_tx(uid, "AdminSend", amount, f"Admin sent TON")
+            context.bot.send_message(uid, f"💵 You received {amount} TON from admin.")
+            update.message.reply_text(f"✅ Sent {amount} TON to @{uname}.")
+        except:
+            update.message.reply_text("❌ Invalid amount.")
         del give_ton_state[user_id]
 
 def inline_callback_handler(update: Update, context: CallbackContext):
@@ -984,7 +1024,8 @@ def register_handlers(dispatcher):
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^📤 \$PTRST$'), trigger_withdraw))
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^📤 TON$'), trigger_withdraw))
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^🏮SET_WALLET$'), wallet_handler))
-    
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, withdraw_request))
+
     # Admin handlers
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^💸 Airdrop \$PTRST$'), start_airdrop_ptrst))
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^💵Give TON$'), start_give_ton))
