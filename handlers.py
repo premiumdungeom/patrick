@@ -39,16 +39,14 @@ weekly_prize_usd = 40000
 weekly_prize_ton = 0  # This should be set according to TON price or by admin
 
 LANGUAGES = {"en": "English", "es": "Español"}
-
 def main_menu(user_id=None):
     kb = [
         [f"{EMOJIS['new_task']} New Task", f"{EMOJIS['account']} Account", "📈 My Analytics"],
         [f"{EMOJIS['ptrst']} $PTRST", f"{EMOJIS['friends']} Friends", "🏆 Weekly Referral Contest"],
         [f"{EMOJIS['ton']} TON", f"{EMOJIS['about']} About", "🌳 My Referral Tree"],
         ["🏆 Leaderboard", "📜 Transaction History", "🎖️ Badges"],
-        ["🔔 Notifications", "🎁 Blind Box", "🎂 Set Birthday", "🎂 Claim Birthday Reward"],
-        ["🧠 Quiz", "🆘 Help", "❓ FAQ"],
-        ["🌐 Language", "🚏BACK"]
+        ["🔔 Notifications", "🎁 Blind Box"],
+        ["🚏BACK"]
     ]
     return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
@@ -553,6 +551,11 @@ def withdraw_request(update: Update, context: CallbackContext):
 def trigger_withdraw(update: Update, context: CallbackContext):
     txt = update.message.text
     user_id = update.effective_user.id
+
+    # Remove from both if switching
+    ptrst_withdraw_mode.pop(user_id, None)
+    ton_withdraw_mode.pop(user_id, None)
+
     if txt == "📤 $PTRST":
         ptrst_withdraw_mode[user_id] = True
         update.message.reply_text("Enter amount to withdraw in $PTRST:")
@@ -935,12 +938,6 @@ def main_menu_router(update: Update, context: CallbackContext):
         return wallet_handler(update, context)
     elif txt == "🚏BACK":
         return show_main_menu(update, context)
-    elif txt == "🌐 Language":
-        return choose_language(update, context)
-    elif txt == "🆘 Help":
-        return help_command(update, context)
-    elif txt == "❓ FAQ":
-        return faq_command(update, context)
     elif txt == "🎖️ Badges":
         return check_achievements(update, context)
     elif txt == "📈 My Analytics":
@@ -949,15 +946,8 @@ def main_menu_router(update: Update, context: CallbackContext):
         return referral_tree(update, context)
     elif txt == "🎁 Blind Box":
         return blind_box(update, context)
-    elif txt == "🎂 Set Birthday":
-        context.user_data["setting_birthday"] = True
-        return set_birthday(update, context)
-    elif txt == "🎂 Claim Birthday Reward":
-        return birthday_claim(update, context)
     elif txt == "🏆 Weekly Referral Contest":
         return referral_contest_leaderboard(update, context)
-    elif txt == "🧠 Quiz":
-        return quiz_command(update, context)
     elif txt == "/onboarding":
         return onboarding(update, context)
     elif txt == "/support":
@@ -988,10 +978,8 @@ def register_handlers(dispatcher):
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("admin", admin))
     dispatcher.add_handler(CommandHandler("help", help_command))
-    dispatcher.add_handler(CommandHandler("faq", faq_command))
     dispatcher.add_handler(CommandHandler("onboarding", onboarding))
     dispatcher.add_handler(CommandHandler("support", support_command))
-    dispatcher.add_handler(CommandHandler("quiz", quiz_command))
     
     # Callback query handler
     dispatcher.add_handler(CallbackQueryHandler(inline_callback_handler))
@@ -1004,10 +992,6 @@ def register_handlers(dispatcher):
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^🌳 My Referral Tree$'), referral_tree))
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^🔔 Notifications$'), notifications))
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^🎁 Blind Box$'), blind_box))
-    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🧠 Quiz$'), quiz_command))
-    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🆘 Help$'), help_command))
-    dispatcher.add_handler(MessageHandler(Filters.regex(r'^❓ FAQ$'), faq_command))
-    dispatcher.add_handler(MessageHandler(Filters.regex(r'^🌐 Language$'), choose_language))
     dispatcher.add_handler(MessageHandler(Filters.regex(r'^🚏BACK$'), show_main_menu))
     
     # Token-related handlers
