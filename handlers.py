@@ -1036,14 +1036,6 @@ def main_menu_router(update: Update, context: CallbackContext):
         return admin(update, context)
     elif txt == "/start":
         return start(update, context)
-    elif txt == "/language":
-        return choose_language(update, context)
-    elif txt == "/birthday":
-        return set_birthday(update, context)
-    elif txt == "/birthday_claim":
-        return birthday_claim(update, context)
-    elif txt == "/faq":
-        return faq_command(update, context)
     else:
         update.message.reply_text("❓ Unrecognized command. Use the menu or /start.")
 def register_handlers(dispatcher):
@@ -1053,10 +1045,6 @@ def register_handlers(dispatcher):
     dispatcher.add_handler(CommandHandler("help", help_command))
     dispatcher.add_handler(CommandHandler("onboarding", onboarding))
     dispatcher.add_handler(CommandHandler("support", support_command))
-    dispatcher.add_handler(CommandHandler("language", choose_language))
-    dispatcher.add_handler(CommandHandler("birthday", set_birthday))
-    dispatcher.add_handler(CommandHandler("birthday_claim", birthday_claim))
-    dispatcher.add_handler(CommandHandler("faq", faq_command))
     
     # Callback query handler
     dispatcher.add_handler(CallbackQueryHandler(inline_callback_handler))
@@ -1093,18 +1081,7 @@ def register_handlers(dispatcher):
         handle_give_ton
     ))
     
-    # Birthday handler
-    dispatcher.add_handler(MessageHandler(
-        Filters.text & Filters.user({uid for uid, data in context.user_data.items() if data.get("setting_birthday")}),
-        save_birthday
-    ))
-    
-    # Language selection handler
-    dispatcher.add_handler(MessageHandler(
-        Filters.text & Filters.regex(f"^({'|'.join(LANGUAGES.values())})$"),
-        set_language
-    ))
-    
+
     # General text handler (fallback)
     dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, main_menu_router))
     
