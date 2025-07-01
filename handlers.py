@@ -212,7 +212,7 @@ def handle_captcha(update: Update, context: CallbackContext):
 
 def show_main_menu(update: Update, context: CallbackContext, edit=False):
     if hasattr(update, 'message'):
-        update.message.reply_text("🎁 9 FREE NFT GIFTS🎁 [9 FREE NFT GIFTS](https://x.com/Megabolly", reply_markup=main_menu(update.effective_user.id))
+        update.message.reply_text("🎁 9 FREE NFT GIFTS🎁 [9 FREE NFT GIFTS](https://x.com/Megabolly)", reply_markup=main_menu(update.effective_user.id))
     elif hasattr(update, 'callback_query'):
         context.bot.send_message(
             update.callback_query.from_user.id,
