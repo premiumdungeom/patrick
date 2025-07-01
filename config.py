@@ -3,7 +3,7 @@
 # Admin user IDs
 ADMINS = [5650788149, 8108410868]
 
-TOKEN = "8186651135:AAEq_xB2dzdxMpPIGJljdLHmsBh9oXqWDZc"
+TOKEN = "8042213784:AAEnFnkHGue3pdIAjTfWll-WqWvLHWLpF0w"
 
 # Define only the required channel
 REQUIRED_CHANNELS = ["gouglenetwork"]
