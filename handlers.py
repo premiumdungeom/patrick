@@ -588,6 +588,47 @@ def handle_withdraw_amount(update: Update, context: CallbackContext):
         return withdraw_request(update, context)
     return None
 
+def process_rejection_reason(update: Update, context: CallbackContext):
+    user_id = update.effective_user.id
+    txt = update.message.text.strip()
+    
+    if txt == "🚫 Cancel":
+        del pending_reject_reason[user_id]
+        update.message.reply_text("Rejection cancelled.", reply_markup=admin_panel_keyboard())
+        return
+    
+    withdrawal_id = pending_reject_reason[user_id]
+    wd = pending_withdrawals.pop(withdrawal_id, None)
+    
+    if wd:
+        target_user_id = wd["user_id"]
+        amount = wd["amount"]
+        token = wd["token"]
+        
+        # Return funds to user's balance
+        if token == "PTRST":
+            update_balance(target_user_id, "ptrst", amount)
+        elif token == "TON":
+            update_balance(target_user_id, "ton", amount)
+        
+        # Notify user
+        context.bot.send_message(
+            target_user_id,
+            f"❌ Your withdrawal of {amount} {token} was rejected by admin.\nReason: {txt}"
+        )
+        
+        # Add transaction record
+        add_tx(target_user_id, "Withdraw Rejected", amount, f"{token} Withdraw rejected: {txt}")
+        
+        update.message.reply_text(
+            f"❌ Withdrawal rejected and user notified with your reason.",
+            reply_markup=admin_panel_keyboard()
+        )
+    else:
+        update.message.reply_text("Withdrawal already processed or not found.", reply_markup=admin_panel_keyboard())
+    
+    del pending_reject_reason[user_id]
+
 def wallet_handler(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     txt = update.message.text
