@@ -1087,3 +1087,10 @@ def register_handlers(dispatcher):
     
     # Error handler
     dispatcher.add_error_handler(error_handler)
+
+    # Error handler
+    dispatcher.add_error_handler(error_handler)
+def error_handler(update: Update, context: CallbackContext):
+    logger.error(f"Update {update} caused error {context.error}")
+    if update and update.effective_message:
+        update.effective_message.reply_text("An error occurred. Please try again.")
