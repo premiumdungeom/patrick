@@ -259,6 +259,7 @@ def set_language(update: Update, context: CallbackContext):
 def help_command(update: Update, context: CallbackContext):
     update.message.reply_text(
         "🆘 *Help*\n"
+        "- Use /onboarding for full guide
         "- Use the main menu to claim, invite, withdraw, and more.\n"
         "- Use /support to contact the admin.",
         parse_mode="Markdown"
