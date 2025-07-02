@@ -1,4 +1,4 @@
-# config.py
+# config.pynn
 
 # Admin user IDs
 ADMINS = [5650788149, 8108410868]
