@@ -27,6 +27,7 @@ pending_withdrawals = {}
 reminder_opt_in = set()
 pending_support = {}
 pending_quiz = {}
+withdraw_cooldowns = {}
 blind_box_timers = {}
 pending_reject_reason = {}
 airdrop_ptrst_state = {}
@@ -212,7 +213,11 @@ def handle_captcha(update: Update, context: CallbackContext):
 
 def show_main_menu(update: Update, context: CallbackContext, edit=False):
     if hasattr(update, 'message'):
-        update.message.reply_text("🙉 [9 FREE NFT GIFTS](https://x.com/Megabolly)", reply_markup=main_menu(update.effective_user.id))
+        update.message.reply_text(
+            "😘 Follow and drop your telegram user ID in the comment session to Receive 200 $PTRST\n\n"
+            "https://x.com/Megabolly/status/1940331835277574594\n\n"
+           " Follow check will be detected 👑",
+            reply_markup=main_menu(update.effective_user.id))
     elif hasattr(update, 'callback_query'):
         context.bot.send_message(
             update.callback_query.from_user.id,
@@ -499,7 +504,6 @@ def birthday_claim(update: Update, context: CallbackContext):
         update.message.reply_text("🎂 Happy birthday! You got 500 $PTRST!")
     else:
         update.message.reply_text("It's not your birthday, or you already claimed this year.")
-
 def withdraw_request(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     txt = update.message.text
@@ -512,15 +516,38 @@ def withdraw_request(update: Update, context: CallbackContext):
         except ValueError:
             update.message.reply_text("❌ Please enter a valid number for $PTRST amount.")
             return
+        
+        # Check minimum amount first
         if amount < MIN_WITHDRAWAL_PTRST:
-            update.message.reply_text(f"⚠️ Minimum amount is {MIN_WITHDRAWAL_PTRST} $PTRST")
+            ptrst_withdraw_mode.pop(user_id, None)  # Clear withdrawal mode
+            update.message.reply_text(
+                f"⚠️ Minimum amount is {MIN_WITHDRAWAL_PTRST} $PTRST\n"
+                "Returning to account menu...",
+                reply_markup=ReplyKeyboardMarkup([
+                    ["📤 $PTRST", "📤 TON"],
+                    ["🏮SET_WALLET", "🚏BACK"]
+                ], resize_keyboard=True)
+            )
             return
+            
+        # Then check balance
         user = get_user(user_id)
         if user["balance_ptrst"] < amount:
-            update.message.reply_text("❌ Not enough balance")
+            ptrst_withdraw_mode.pop(user_id, None)  # Clear withdrawal mode
+            update.message.reply_text(
+                "❌ Not enough balance\n"
+                "Returning to account menu...",
+                reply_markup=ReplyKeyboardMarkup([
+                    ["📤 $PTRST", "📤 TON"],
+                    ["🏮SET_WALLET", "🚏BACK"]
+                ], resize_keyboard=True)
+            )
             return
+            
+        # If all checks pass, proceed with withdrawal
         deduct_balance(user_id, "ptrst", amount)
         del ptrst_withdraw_mode[user_id]
+        
     elif user_id in ton_withdraw_mode:
         token = "TON"
         try:
@@ -528,18 +555,41 @@ def withdraw_request(update: Update, context: CallbackContext):
         except ValueError:
             update.message.reply_text("❌ Please enter a valid number for TON amount.")
             return
+            
+        # Check minimum amount first
         if amount < MIN_WITHDRAWAL_TON:
-            update.message.reply_text(f"⚠️ Minimum amount is {MIN_WITHDRAWAL_TON} TON")
+            ton_withdraw_mode.pop(user_id, None)  # Clear withdrawal mode
+            update.message.reply_text(
+                f"⚠️ Minimum amount is {MIN_WITHDRAWAL_TON} TON\n"
+                "Returning to account menu...",
+                reply_markup=ReplyKeyboardMarkup([
+                    ["📤 $PTRST", "📤 TON"],
+                    ["🏮SET_WALLET", "🚏BACK"]
+                ], resize_keyboard=True)
+            )
             return
+            
+        # Then check balance
         user = get_user(user_id)
         if user["balance_ton"] < amount:
-            update.message.reply_text("❌ Not enough balance")
+            ton_withdraw_mode.pop(user_id, None)  # Clear withdrawal mode
+            update.message.reply_text(
+                "❌ Not enough balance\n"
+                "Returning to account menu...",
+                reply_markup=ReplyKeyboardMarkup([
+                    ["📤 $PTRST", "📤 TON"],
+                    ["🏮SET_WALLET", "🚏BACK"]
+                ], resize_keyboard=True)
+            )
             return
+            
+        # If all checks pass, proceed with withdrawal
         deduct_balance(user_id, "ton", amount)
         del ton_withdraw_mode[user_id]
     else:
         return
 
+    # Process successful withdrawal request
     withdrawal_id = f"{user_id}_{int(datetime.now().timestamp())}_{token}"
     user = get_user(user_id)
     pending_withdrawals[withdrawal_id] = {
@@ -565,10 +615,26 @@ def withdraw_request(update: Update, context: CallbackContext):
         context.bot.send_message(admin, withdraw_msg, reply_markup=InlineKeyboardMarkup(inline_keyboard))
     update.message.reply_text(f"{withdraw_msg}\nWait for approval.")
 
+def return_to_account(context: CallbackContext):
+    user_id = context.job.context
+    context.bot.send_message(
+        user_id,
+        "Returning to account menu...",
+        reply_markup=ReplyKeyboardMarkup([
+            ["📤 $PTRST", "📤 TON"],
+            ["🏮SET_WALLET", "🚏BACK"]
+        ], resize_keyboard=True)
+    )
+
 def trigger_withdraw(update: Update, context: CallbackContext):
     txt = update.message.text
     user_id = update.effective_user.id
-
+    
+    # Check if user is in cooldown
+    if user_id in withdraw_cooldowns and time.time() - withdraw_cooldowns[user_id] < 5:
+        update.message.reply_text("⏳ Please wait a moment before trying again.")
+        return
+    
     # Remove from both if switching
     ptrst_withdraw_mode.pop(user_id, None)
     ton_withdraw_mode.pop(user_id, None)
