@@ -6,9 +6,9 @@ ADMINS = [5650788149, 8108410868]
 TOKEN = "8042213784:AAEnFnkHGue3pdIAjTfWll-WqWvLHWLpF0w"
 
 # Define only the required channel
-REQUIRED_CHANNELS = ["gouglenetwork"]
+REQUIRED_CHANNELS = ["ptrst_official"]
 
-CHANNEL_USERNAME = "@gouglenetwork"
+CHANNEL_USERNAME = "@ptrst_official"
 
 WEBHOOK_URL = "https://patrickeded.onrender.com"
 
