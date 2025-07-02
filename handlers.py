@@ -645,10 +645,14 @@ def check_withdrawal_start(context: CallbackContext):
                 logger.error(f"Error notifying user {user_id}: {e}")
 
 def schedule_withdrawal_check(dispatcher):
-    # Check every hour if withdrawals should open
+    if not hasattr(dispatcher, 'job_queue') or dispatcher.job_queue is None:
+        logger.warning("Job queue not available - running in webhook mode?")
+        return
+        
+    # Only schedule if we have a job queue
     dispatcher.job_queue.run_repeating(
         check_withdrawal_start,
-        interval=3600,  # 1 hour
+        interval=3600,
         first=0
     )
 
@@ -918,15 +922,22 @@ def payout_weekly_contest(context=None):
     return winners_msg
 
 def schedule_weekly_contest(bot):
-    def loop():
-        while True:
-            now = datetime.utcnow()
-            if now.weekday() == 6 and now.hour == 23 and now.minute >= 59:
-                payout_weekly_contest()
-                time.sleep(3600)
-            time.sleep(60)
-    t = threading.Thread(target=loop, daemon=True)
-    t.start()
+    # Get the job queue from the bot's dispatcher
+    if not hasattr(bot, 'dispatcher') or not hasattr(bot.dispatcher, 'job_queue'):
+        logger.warning("No job queue available for weekly contest scheduling")
+        return
+
+    job_queue = bot.dispatcher.job_queue
+
+    def contest_runner(context):
+        payout_weekly_contest(context)
+
+    # Schedule to run every Sunday at 23:59 UTC
+    job_queue.run_daily(
+        contest_runner,
+        time=datetime.time(hour=23, minute=59),
+        days=(6,)  # Sunday is day 6 (0=Monday)
+    )
 
 def referral_contest_leaderboard(update: Update, context: CallbackContext):
     update_weekly_leaderboard()
