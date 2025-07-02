@@ -28,6 +28,7 @@ reminder_opt_in = set()
 pending_support = {}
 pending_quiz = {}
 withdraw_cooldowns = {}
+WITHDRAWAL_START_DATE = datetime(2025, 8, 1)
 blind_box_timers = {}
 pending_reject_reason = {}
 airdrop_ptrst_state = {}
@@ -128,10 +129,10 @@ def start(update: Update, context: CallbackContext):
     # Subscription message with inline button
     subs_message = (
         f"{EMOJIS['start']} **Subscribe to all resources:**\n\n"
-        "1️⃣ [Patrick Official](https://t.me/minohamsterdailys)\n"
-        "2️⃣ [Combo Hamster](https://t.me/gouglenetwork)\n"
-        "3️⃣ [AI Isaac](https://t.me/AIIsaac_bot/sponsor)\n"
-        "4️⃣ [AI Isaac BNB](https://t.me/aiisaac_bnb)\n\n"
+        "1️⃣ [Patrick Official](https://t.me/ptrst_official)\n"
+        "2️⃣ [Patrick Association](https://t.me/patrickstarsfarm)\n"
+        "3️⃣ [Detective](https://t.me/AirdropDetective)\n"
+        "4️⃣ [Promotion](https://t.me/airdropinspector)\n\n"
         "Then click below 👇"
     )
     btn = InlineKeyboardButton("✅ I've Subscribed", callback_data="check_subscription")
@@ -162,10 +163,11 @@ def check_subscription(update: Update, context: CallbackContext):
             msg = (
                 "❌ You haven't joined all channels (@gouglenetwork)\n\n"
                 f"{EMOJIS['start']} Subscribe to all resources:\n\n"
-                "1️⃣ [Patrick Official](https://t.me/minohamsterdailys)\n"
-                "2️⃣ [Combo Hamster](https://t.me/gouglenetwork)\n"
-                "3️⃣ [AI Isaac](https://t.me/AIIsaac_bot/sponsor)\n"
-                "4️⃣ [AI Isaac BNB](https://t.me/aiisaac_bnb)\n\n"
+                "1️⃣ [Patrick Official](https://t.me/ptrst_official)\n"
+                "2️⃣ [Patrick Association](https://t.me/patrickstarsfarm)\n"
+                "3️⃣ [Detective](https://t.me/AirdropDetective)\n"
+                "4️⃣ [Promotion](https://t.me/airdropinspector)\n\n"
+                "Then click below 👇"
                 "After subscribing, click below 👇"
             )
             btn = InlineKeyboardButton("✅ I've Subscribed", callback_data="check_subscription")
@@ -203,9 +205,10 @@ def handle_captcha(update: Update, context: CallbackContext):
             "Every time your friend picks up the bonus you will get 25% of the amount\n\n"
             "💎 Collect TON bonus every 8 hours and get up to 0.070 TON.\n"
             "Every time your friend picks up the bonus you will get 25% of the amount\n\n"
-            "🗓️Listing $PTRST on AUGUST 1ST at 16:00 (UTC+3)\n\n"
-            "🏆The more $PTRST you have, the more you will earn from the listing\n\n"
-            "🔥All unallocated $PTRST will be burned, which will add to the price of $PTRST"
+            "🚩 Distribution Date | AUGUST 1ST at 12:00 (UTC+4)\n\n"
+            "🗓️ Listing $PTRST on AUGUST 15TH at 15:00 (UTC+3)\n\n"
+            "🏆 The more $PTRST you have, the more you will earn from the listing\n\n"
+            "🔥 All unallocated $PTRST will be burned, which will add to the price of $PTRST"
       )
         show_main_menu(update, context)
     else:
@@ -504,10 +507,24 @@ def birthday_claim(update: Update, context: CallbackContext):
         update.message.reply_text("🎂 Happy birthday! You got 500 $PTRST!")
     else:
         update.message.reply_text("It's not your birthday, or you already claimed this year.")
+
 def withdraw_request(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     txt = update.message.text
     token = None
+
+    if datetime.now() < WITHDRAWAL_START_DATE:
+        countdown = get_withdrawal_countdown()
+        update.message.reply_text(
+            f"⏳ Withdrawals will open on August 1st, 2025!\n"
+            f"Time remaining: {countdown}\n\n"
+            "You can still earn and accumulate $PTRST and TON until then!",
+            reply_markup=ReplyKeyboardMarkup([
+                ["📤 $PTRST", "📤 TON"],
+                ["🏮SET_WALLET", "🚏BACK"]
+            ], resize_keyboard=True)
+        )
+        return
 
     if user_id in ptrst_withdraw_mode:
         token = "PTRST"
@@ -615,6 +632,26 @@ def withdraw_request(update: Update, context: CallbackContext):
         context.bot.send_message(admin, withdraw_msg, reply_markup=InlineKeyboardMarkup(inline_keyboard))
     update.message.reply_text(f"{withdraw_msg}\nWait for approval.")
 
+def check_withdrawal_start(context: CallbackContext):
+    if datetime.now() >= WITHDRAWAL_START_DATE:
+        users = load_users()
+        for user_id in users:
+            try:
+                context.bot.send_message(
+                    user_id,
+                    "🎉 Withdrawals are now open! You can now withdraw your $PTRST and TON tokens!"
+                )
+            except Exception as e:
+                logger.error(f"Error notifying user {user_id}: {e}")
+
+def schedule_withdrawal_check(dispatcher):
+    # Check every hour if withdrawals should open
+    dispatcher.job_queue.run_repeating(
+        check_withdrawal_start,
+        interval=3600,  # 1 hour
+        first=0
+    )
+
 def return_to_account(context: CallbackContext):
     user_id = context.job.context
     context.bot.send_message(
@@ -630,7 +667,21 @@ def trigger_withdraw(update: Update, context: CallbackContext):
     txt = update.message.text
     user_id = update.effective_user.id
     
-    # Check if user is in cooldown
+    # Check if withdrawals are open
+    countdown = get_withdrawal_countdown()
+    if countdown:
+        update.message.reply_text(
+            f"⏳ Withdrawals will open on August 1st, 2025!\n"
+            f"Time remaining: {countdown}\n\n"
+            "You can still earn and accumulate $PTRST and TON until then!",
+            reply_markup=ReplyKeyboardMarkup([
+                ["📤 $PTRST", "📤 TON"],
+                ["🏮SET_WALLET", "🚏BACK"]
+            ], resize_keyboard=True)
+        )
+        return
+    
+    # Rest of your existing withdraw trigger code...
     if user_id in withdraw_cooldowns and time.time() - withdraw_cooldowns[user_id] < 5:
         update.message.reply_text("⏳ Please wait a moment before trying again.")
         return
@@ -834,6 +885,17 @@ def update_weekly_leaderboard(force=False):
             scores.append((uid, len(refs_this_week)))
     scores = sorted(scores, key=lambda x: -x[1])[:250]
     weekly_contest_leaderboard = scores
+
+def get_withdrawal_countdown():
+    now = datetime.now()
+    if now >= WITHDRAWAL_START_DATE:
+        return None  # Countdown expired
+    
+    delta = WITHDRAWAL_START_DATE - now
+    days = delta.days
+    hours, remainder = divmod(delta.seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{days} days {hours} hours {minutes} mins {seconds} secs"
 
 def payout_weekly_contest(context=None):
     update_weekly_leaderboard(force=True)
@@ -1091,12 +1153,48 @@ def main_menu_router(update: Update, context: CallbackContext):
         return claim_ton(update, context)
     elif txt == f"{EMOJIS['about']} About":
         update.message.reply_text(
-            "🔹 PTRST Airdrop Bot\n\n"
-            "Earn $PTRST tokens by completing tasks and inviting friends!\n\n"
-            "Official links:\n"
-            "Website: https://ptrst.io\n"
-            "Twitter: https://twitter.com/ptrst_token\n"
-            "Telegram: https://t.me/ptrst_official"
+    "**🎬 Imagine this...**\n"
+    "A token, not just created for hype — but *engineered for impact.*\n"
+    "Born on TON. **Powered by people.** Controlled by no one.\n"
+    "🔥 **This is $PTRST.**\n\n"
+    
+    "---\n\n"
+    
+    "**👑 Welcome to Patrick Star** — a new era where **rewards flow endlessly** to those who dare to take the first step.\n"
+    "While others chase charts, you're here **mining value with every tap.**\n\n"
+    
+    "---\n\n"
+    
+    "**💰 You don’t buy $PTRST — you earn it.**\n"
+    "✅ Complete tasks\n"
+    "✅ Invite friends\n"
+    "✅ Claim drops every 30 minutes\n"
+    "✅ Stack TON bonuses\n"
+    "✅ Earn up to *225 $PTRST* per referral chain\n\n"
+    
+    "**🔐 Withdraw via Tonkeeper only** — fast, secure, and reliable.\n"
+    "💵 You earn it? You keep it.\n\n"
+    
+    "**📅 LISTING DATE:** August 15 @ 16:00 (UTC+3)\n"
+    "**DEXES:** DeDust | StonFi | SwapCoffee\n"
+    "**💥 Sell instantly on listing!**\n\n"
+    
+    "**📊 Tokenomics:**\n"
+    "• 100,000,000 Total Supply\n"
+    "• 70% Airdrop\n"
+    "• 15% Listings\n"
+    "• 10% Marketing\n"
+    "• 5% Team\n"
+    "• ✅ Ownership Revoked — **community-owned forever.**\n\n"
+    
+    "**🎯 Goal:** 10,000 unique Tonkeeper wallets\n\n"
+    
+    "**🚀 Are you early? Are you ready?**\n"
+    "**Then it's time to claim what’s yours.**\n\n"
+    
+    "**👉 Start now:** @ptrstr_bot\n"
+    "💘 Telegram: https://t.me/ptrst_official\n"
+    "🐦 Twitter: https://twitter.com/Megabolly"
         )
     elif txt == "📜 Transaction History":
         return transaction_history(update, context)
@@ -1145,6 +1243,7 @@ def main_menu_router(update: Update, context: CallbackContext):
     else:
         update.message.reply_text("❓ Unrecognized command. Use the menu or /start.")
 def register_handlers(dispatcher):
+    schedule_withdrawal_check(dispatcher)
     # Command handlers
     dispatcher.add_handler(CommandHandler("start", start))
     dispatcher.add_handler(CommandHandler("admin", admin))
