@@ -549,7 +549,7 @@ def has_claimed_recently(user_id, hours=24):
     return (datetime.now(UTC) - last_claim) < timedelta(hours=hours)
 
 @rate_limit('claim_ton', calls=3, period=10) 
-def claim_ton(update: Update, context: CallbackContext)
+def claim_ton(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     data = get_user(user_id)
     left = check_cooldown(data, "ton")
