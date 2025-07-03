@@ -1,7 +1,9 @@
-# config.pynn
+# config.py
+import pytz
+from datetime import datetime
 
 # Admin user IDs
-ADMINS = [5650788149, 8108410868]
+ADMINS = [5650788149, 548105255]
 
 TOKEN = "8042213784:AAEnFnkHGue3pdIAjTfWll-WqWvLHWLpF0w"
 
@@ -44,3 +46,12 @@ REFERRAL_REWARDS = {
 # Withdrawal settings
 MIN_WITHDRAWAL_PTRST = 2000      # Minimum $PTRST withdrawal
 MIN_WITHDRAWAL_TON = 0.2         # Minimum TON withdrawal
+
+UTC = pytz.UTC
+RUSH_START_DATE = datetime(2025, 7, 3, tzinfo=UTC)
+WITHDRAWAL_START_DATE = datetime(2025, 8, 1, tzinfo=UTC)
+
+MAX_DAILY_CLAIMS = 48
+MAX_REWARD_PTRST = 1000
+
+USER_LOCK_TIMEOUT = 30

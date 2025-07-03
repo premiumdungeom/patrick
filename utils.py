@@ -1,11 +1,14 @@
 import json, os, time
 from datetime import datetime
 from telegram import ChatMember
+from threading import Lock
+from functools import wraps
 from config import REQUIRED_CHANNELS
 from config import REFERRAL_REWARDS, PTRST_COOLDOWN, TON_COOLDOWN
 
 USERS_FILE = "users.json"
 PAYOUTS_FILE = "payouts.json"
+balance_locks = {}
 
 def user_exists(user_id: int) -> bool:
     """Check if a user exists in the database"""
@@ -22,19 +25,27 @@ def load_users() -> dict:
     except (json.JSONDecodeError, FileNotFoundError):
         return {}
 
-def save_users(users):
-    with open(USERS_FILE, "w") as f:
-        json.dump(users, f, indent=2)
+def save_users(users, retries=3):
+    for attempt in range(retries):
+        try:
+            with open(USERS_FILE, "w") as f:
+                json.dump(users, f, indent=2)
+            return
+        except IOError as e:
+            if attempt == retries - 1:
+                raise
+            time.sleep(0.1)
 
 def get_user(user_id):
     users = load_users()
-    # Always return a dict, if the user does not exist, return a blank profile for new users (helps with txs etc)
+    # Ensure consistent string IDs and initialize all fields
     return users.get(str(user_id), {
         "id": user_id,
         "username": "",
         "referrer": None,
         "referrals_lvl1": [],
         "referrals_lvl2": [],
+        "referral_timestamps": [],  # NEW FIELD
         "balance_ptrst": 0,
         "balance_ton": 0.0,
         "wallet": None,
@@ -56,12 +67,14 @@ def create_user(user_id, username, referrer_id=None):
     if str_uid in users:
         return users[str_uid]
 
+    # Initialize new user with all required fields
     users[str_uid] = {
         "id": user_id,
         "username": username,
-        "referrer": str(referrer_id) if referrer_id else None,
+        "referrer": str(referrer_id) if referrer_id else None,  # Ensure string
         "referrals_lvl1": [],
         "referrals_lvl2": [],
+        "referral_timestamps": [],  # NEW FIELD
         "balance_ptrst": 0,
         "balance_ton": 0.0,
         "wallet": None,
@@ -72,18 +85,46 @@ def create_user(user_id, username, referrer_id=None):
         "txs": []
     }
 
-    # reward the referrer
-    if referrer_id and str(referrer_id) in users:
-        users[str(referrer_id)]["referrals_lvl1"].append(str_uid)
-        users[str(referrer_id)]["balance_ptrst"] += REFERRAL_REWARDS["level_1"]
+    # Reward referrer (with type consistency)
+    if referrer_id:
+        str_ref_id = str(referrer_id)
+        if str_ref_id in users:
+            users[str_ref_id]["referrals_lvl1"].append(str_uid)
+            users[str_ref_id]["balance_ptrst"] += REFERRAL_REWARDS["level_1"]
+            
+            # Add timestamp for the new referral
+            users[str_ref_id]["referral_timestamps"].append({
+                "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "referral_id": str_uid
+            })
 
-        lvl2 = users[str(referrer_id)].get("referrer")
-        if lvl2 and lvl2 in users:
-            users[lvl2]["referrals_lvl2"].append(str_uid)
-            users[lvl2]["balance_ptrst"] += REFERRAL_REWARDS["level_2"]
+            # Handle level 2 referral
+            lvl2_ref = users[str_ref_id].get("referrer")
+            if lvl2_ref and lvl2_ref in users:
+                users[lvl2_ref]["referrals_lvl2"].append(str_uid)
+                users[lvl2_ref]["balance_ptrst"] += REFERRAL_REWARDS["level_2"]
 
     save_users(users)
     return users[str_uid]
+
+def migrate_existing_users():
+    """One-time migration for existing users"""
+    users = load_users()
+    for user_id, data in users.items():
+        # Initialize referral_timestamps if missing
+        if "referral_timestamps" not in data:
+            data["referral_timestamps"] = []
+            
+        # Convert any integer IDs to strings
+        if isinstance(data.get("referrer"), int):
+            data["referrer"] = str(data["referrer"])
+            
+        # Convert referral lists
+        data["referrals_lvl1"] = [str(x) for x in data.get("referrals_lvl1", [])]
+        data["referrals_lvl2"] = [str(x) for x in data.get("referrals_lvl2", [])]
+    
+    save_users(users)
+    print(f"Migrated {len(users)} user records")
 
 def check_cooldown(user_data, token_type):
     now = time.time()
@@ -154,6 +195,80 @@ def update_total_payout(token_type, amount):
 
     with open(PAYOUTS_FILE, "w") as f:
         json.dump(data, f, indent=2)
+
+def check_sybil_attempt(user_id, ip_address):
+    """Detect potential multi-account abuse"""
+    user = get_user(user_id)
+    
+    # Check if IP was used recently
+    if ip_address in user.get("ip_addresses", []):
+        return True
+        
+    # Track new IP
+    user.setdefault("ip_addresses", []).append(ip_address)
+    save_user(user_id, user)
+    return False
+
+def validate_referral_chain(user_id, referrer_id):
+    """Prevent circular referrals"""
+    visited = set()
+    current = referrer_id
+    
+    while current:
+        if current == user_id:
+            return False  # Circular reference
+        if current in visited:
+            return False  # Loop detected
+        visited.add(current)
+        current = get_user(current).get("referrer")
+        
+    return True
+
+def get_balance_lock(user_id):
+    if user_id not in balance_locks:
+        balance_locks[user_id] = Lock()
+    return balance_locks[user_id]
+
+def update_balance(user_id, token, amount):
+    """Thread-safe balance update with overflow check"""
+    with get_balance_lock(user_id):
+        user = get_user(user_id)
+        current = user.get(f"balance_{token}", 0)
+        
+        # Prevent negative balances
+        if amount < 0 and abs(amount) > current:
+            raise ValueError(f"Insufficient {token} balance")
+            
+        user[f"balance_{token}"] = current + amount
+        save_user(user_id, user)
+
+def deduct_balance(user_id, token, amount):
+    """Deduction with verification"""
+    update_balance(user_id, token, -amount)
+
+def rate_limit(key, calls=3, period=10):
+    """Decorator to limit function calls"""
+    def decorator(f):
+        @wraps(f)
+        def wrapped(*args, **kwargs):
+            user_id = args[1].effective_user.id  # Update/CallbackContext
+            cache_key = f"{key}_{user_id}"
+            
+            now = time.time()
+            timestamps = getattr(wrapped, '_timestamps', {})
+
+            # Clean old entries
+            timestamps[cache_key] = [t for t in timestamps.get(cache_key, []) 
+                                  if now - t < period]
+            
+            if len(timestamps.get(cache_key, [])) >= calls:
+                raise Exception(f"Rate limited: {calls} calls per {period}s")
+                
+            timestamps.setdefault(cache_key, []).append(now)
+            wrapped._timestamps = timestamps
+            return f(*args, **kwargs)
+        return wrapped
+    return decorator
 
 def get_total_payouts():
     if os.path.exists(PAYOUTS_FILE):

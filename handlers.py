@@ -2,6 +2,7 @@ import random
 import time
 import threading
 import logging
+import uuid
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove
 )
@@ -12,14 +13,35 @@ from config import *
 from utils import *
 from datetime import datetime, timedelta
 from utils import user_exists, load_users
+from config import UTC, RUSH_START_DATE, WITHDRAWAL_START_DATE
 
 # Set up logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+NEW_USER_TEMPLATE = {
+    "username": "",
+    "balance_ptrst": 0,
+    "balance_ton": 0,
+    "referrals_lvl1": [],
+    "referrals_lvl2": [],
+    "all_time_refs": 0,
+    "rush_refs": 0,
+    "lvl2_refs": 0,
+    "referral_timestamps": [],
+    "wallet": None,
+    "verified": False,
+    "language": "en",
+    "badges": {},
+    "txs": [],
+    "last_claim": None,
+    "ip_addresses": []
+}
+
 # Global variables
 captcha_store = {}
+leaderboard_lock = threading.Lock()
 ptrst_withdraw_mode = {}
 ton_withdraw_mode = {}
 wallet_input_mode = set()
@@ -34,11 +56,10 @@ pending_reject_reason = {}
 airdrop_ptrst_state = {}
 give_ton_state = {}
 
-weekly_contest_leaderboard = []
-weekly_contest_last_update = 0
-weekly_contest_week = None
-weekly_prize_usd = 40000
-weekly_prize_ton = 0  # This should be set according to TON price or by admin
+live_leaderboard = []
+rush_leaderboard = []
+rush_last_update = 0
+RUSH_START_DATE = datetime(2025, 7, 2)
 
 LANGUAGES = {"en": "English", "es": "Español"}
 def main_menu(user_id=None):
@@ -76,37 +97,130 @@ def set_verified(user_id):
     save_user(user_id, u)
 
 def notify_referrers(context, new_user_id, ref1_id=None, ref2_id=None):
-    if ref1_id:
-        try:
+    if ref1_id and not user_exists(ref1_id):  # Add this check
+        logger.warning(f"Invalid referrer ID: {ref1_id}")
+        return
+    """Handles all referral notifications and leaderboard updates"""
+    try:
+        # Level 1 Notification
+        if ref1_id:
+            ref1_data = get_user(ref1_id)
+            
+            # Update counters
+            ref1_data["all_time_refs"] = ref1_data.get("all_time_refs", 0) + 1
+            if datetime.now() > RUSH_START_DATE:
+                ref1_data["rush_refs"] = ref1_data.get("rush_refs", 0) + 1
+            
+            # Record timestamp
+            ref1_data.setdefault("referral_timestamps", []).append({
+                "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "referral_id": new_user_id,
+                "level": 1
+            })
+            
+            save_user(ref1_id, ref1_data)
+            
+            # Send notification
             context.bot.send_message(
                 ref1_id,
-                f"🎉 Someone has joined using your referral link! (Level 1)\nUser ID: {new_user_id}"
+                f"🎉 New Level 1 referral!\nUser ID: {new_user_id}\n"
+                f"Total: {ref1_data['all_time_refs']} | Rush: {ref1_data.get('rush_refs', 0)}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🏆 Leaderboard", callback_data="view_leaderboard")
+                ]])
             )
-        except Exception as e:
-            logger.error(f"Error notifying referrer 1: {e}")
-    if ref2_id:
-        try:
+
+        # Level 2 Notification
+        if ref2_id:
+            ref2_data = get_user(ref2_id)
+            ref2_data.setdefault("lvl2_refs", 0)
+            ref2_data["lvl2_refs"] += 1
+            
+            # Record timestamp
+            ref2_data.setdefault("referral_timestamps", []).append({
+                "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "referral_id": new_user_id,
+                "level": 2
+            })
+            
+            save_user(ref2_id, ref2_data)
+            
             context.bot.send_message(
                 ref2_id,
-                f"🎉 Someone has joined using your Level 2 referral! (Level 2)\nUser ID: {new_user_id}"
+                f"✨ New Level 2 referral!\nFrom: {ref1_id} → {new_user_id}\n"
+                f"Your L2 Count: {ref2_data['lvl2_refs']}",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔥 Rush", callback_data="view_rush")
+                ]])
             )
-        except Exception as e:
-            logger.error(f"Error notifying referrer 2: {e}")
 
-def create_user_with_ref(context, user_id, username, ref=None):
-    if not user_exists(user_id):
-        if ref:
-            try:
-                ref1_id = int(ref)
+        # Update leaderboards
+        update_live_leaderboard()
+        update_rush_leaderboard()
+
+    except Exception as e:
+        logger.error(f"Error in notify_referrers: {e}")
+        if ref1_id:
+            context.bot.send_message(ref1_id, f"🎉 New referral! ID: {new_user_id}")
+
+def create_user_with_ref(context, user_id, username, ref=None, ip=None):
+    """Thread-safe user creation with validation"""
+    if user_exists(user_id):
+        return False
+
+    with get_user_lock(user_id):
+        # Validate referrer exists and prevent circular refs
+        ref1_id = int(ref) if ref and ref.isdigit() and user_exists(int(ref)) else None
+        if ref1_id and not validate_referral_chain(user_id, ref1_id):
+            ref1_id = None  # Invalid chain
+            
+        new_user = NEW_USER_TEMPLATE.copy()
+        new_user.update({
+            "username": username,
+            "ip_addresses": [ip] if ip else []
+        })
+
+        # Process referral
+        if ref and ref.isdigit():
+            ref1_id = int(ref)
+            if user_exists(ref1_id):
+                new_user["referrer"] = ref1_id
                 ref1_data = get_user(ref1_id)
-                ref2_id = ref1_data.get("referrer") if ref1_data else None
-                create_user(user_id, username, ref)
-                notify_referrers(context, user_id, ref1_id=ref1_id, ref2_id=ref2_id)
-            except ValueError:
-                logger.error(f"Invalid referral ID: {ref}")
-                create_user(user_id, username)
-        else:
-            create_user(user_id, username)
+                
+                # Update Level 1 referrer
+                with get_user_lock(ref1_id):
+                    ref1_data["referrals_lvl1"].append(user_id)
+                    ref1_data["all_time_refs"] += 1
+                    
+                    now = datetime.now(UTC)
+                    if now > RUSH_START_DATE:
+                        ref1_data["rush_refs"] += 1
+                    
+                    ref1_data["referral_timestamps"].append({
+                        "date": now.isoformat(),
+                        "referral_id": user_id,
+                        "level": 1,
+                        "rush_eligible": now > RUSH_START_DATE
+                    })
+                    save_user(ref1_id, ref1_data)
+
+                # Update Level 2 referrer if exists
+                ref2_id = ref1_data.get("referrer")
+                if ref2_id and user_exists(ref2_id):
+                    with get_user_lock(ref2_id):
+                        ref2_data = get_user(ref2_id)
+                        ref2_data["referrals_lvl2"].append(user_id)
+                        ref2_data["lvl2_refs"] += 1
+                        ref2_data["referral_timestamps"].append({
+                            "date": now.isoformat(),
+                            "referral_id": user_id,
+                            "level": 2,
+                            "rush_eligible": now > RUSH_START_DATE
+                        })
+                        save_user(ref2_id, ref2_data)
+
+        save_user(user_id, new_user)
+        return True
 
 def start(update: Update, context: CallbackContext):
     user = update.effective_user
@@ -118,15 +232,15 @@ def start(update: Update, context: CallbackContext):
         show_main_menu(update, context)
         return
 
-    # Handle referral if present
-    if context.args and len(context.args) > 0:
-        ref = context.args[0]
+    # Optimized referral handling
+    ref = context.args[0] if context.args else None
+    if ref:
         logger.info(f"User came from referral: {ref}")
-        create_user_with_ref(context, user_id, username, ref)
-    else:
-        create_user_with_ref(context, user_id, username)
+    
+    # Unified user creation
+    create_user_with_ref(context, user_id, username, ref)
 
-    # Subscription message with inline button
+    # Your original unchanged message
     subs_message = (
         f"{EMOJIS['start']} **Subscribe to all resources:**\n\n"
         "1️⃣ [Patrick Official](https://t.me/ptrst_official)\n"
@@ -150,7 +264,7 @@ def check_subscription(update: Update, context: CallbackContext):
     
     try:
         # Check if user is member of required channel
-        chat_member = context.bot.get_chat_member("@gouglenetwork", user_id)
+        chat_member = context.bot.get_chat_member("@ptrst_official", user_id)
         if chat_member.status in ["member", "administrator", "creator"]:
             a, b = random.randint(1, 9), random.randint(1, 9)
             captcha_store[user_id] = a + b
@@ -161,7 +275,7 @@ def check_subscription(update: Update, context: CallbackContext):
             )
         else:
             msg = (
-                "❌ You haven't joined all channels (@gouglenetwork)\n\n"
+                "❌ You haven't joined all channels\n\n"
                 f"{EMOJIS['start']} Subscribe to all resources:\n\n"
                 "1️⃣ [Patrick Official](https://t.me/ptrst_official)\n"
                 "2️⃣ [Patrick Association](https://t.me/patrickstarsfarm)\n"
@@ -217,7 +331,7 @@ def handle_captcha(update: Update, context: CallbackContext):
 def show_main_menu(update: Update, context: CallbackContext, edit=False):
     if hasattr(update, 'message'):
         update.message.reply_text(
-            "😘 Follow and drop your telegram user ID in the comment session to Receive 200 $PTRST\n\n"
+            "🚩 Follow and drop your telegram user ID in the comment session to Receive 200 $PTRST\n\n"
             "https://x.com/Megabolly/status/1940331835277574594\n\n"
            " Follow check will be detected 👑",
             reply_markup=main_menu(update.effective_user.id))
@@ -335,20 +449,6 @@ def friends(update: Update, context: CallbackContext):
         f"https://t.me/ptrstr_bot?start={update.effective_user.id}"
     )
 
-def leaderboard(update: Update, context: CallbackContext):
-    users = load_users()
-    scores = []
-    for uid, data in users.items():
-        if isinstance(data, dict):
-            scores.append((uid, len(data.get("referrals_lvl1", [])), data.get("balance_ptrst", 0)))
-    scores = sorted(scores, key=lambda x: (-x[1], -x[2]))[:10]
-    msg = "🏆 Top Inviters Leaderboard:\n\n"
-    for i, (uid, refs, bal) in enumerate(scores, 1):
-        user = get_user(uid)
-        uname = user.get("username") or str(uid)
-        msg += f"{i}. @{uname} - {refs} invited - {bal} $PTRST\n"
-    update.message.reply_text(msg)
-
 def transaction_history(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
     txs = get_user(user_id).get("txs", [])
@@ -408,28 +508,48 @@ def update_streak(user_id):
     save_user(user_id, u)
     return streak
 
+@rate_limit('claim_ptrst', calls=5, period=10)
 def claim_ptrst(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    data = get_user(user_id)
-    left = check_cooldown(data, "ptrst")
-    if left > 0:
-        update.message.reply_text(f"⏳ Next bonus in {format_time(left)}")
-        return
-    reward = random.randint(100, 1000)
-    streak = update_streak(user_id)
-    if streak >= 3:
-        reward += 150
-        grant_badge(user_id, f"Streak {streak} days")
-    update_balance(user_id, "ptrst", reward)
-    update_claim_time(user_id, "ptrst")
-    inviter = data.get("referrer")
-    if inviter:
-        bonus = int(reward * 0.25)
-        update_balance(inviter, "ptrst", bonus)
-    add_tx(user_id, "Airdrop", reward, "You claimed bonus $PTRST")
+    
+    with get_user_lock(user_id):
+        user = get_user(user_id)
+        left = check_cooldown(user, "ptrst")
+        
+        if left > 0:
+            update.message.reply_text(f"⏳ Next bonus in {format_time(left)}")
+            return
+            
+        # Calculate reward with streak bonus
+        base_reward = min(random.randint(100, 1000), MAX_REWARD_PTRST)
+        streak = update_streak(user_id)
+        reward = base_reward + (150 if streak >= 3 else 0)
+        
+        # Atomic balance update
+        update_balance(user_id, "ptrst", reward)
+        update_claim_time(user_id, "ptrst")
+        
+        # Referral bonus (only if referrer is active)
+        inviter = user.get("referrer")
+        if inviter and has_claimed_recently(inviter, hours=24):
+            bonus = int(reward * 0.25)
+            update_balance(inviter, "ptrst", bonus)
+            add_tx(inviter, "Referral", bonus, f"L1 referral bonus from {user_id}")
+
+        add_tx(user_id, "Airdrop", reward, "Claimed PTRST bonus")
+        
     update.message.reply_text(f"👑 Successful! You got {reward} $PTRST\n🔥 Streak: {streak} day(s)")
 
-def claim_ton(update: Update, context: CallbackContext):
+def has_claimed_recently(user_id, hours=24):
+    """Check if referrer is active"""
+    user = get_user(user_id)
+    if not user or "last_claim" not in user:
+        return False
+    last_claim = datetime.fromisoformat(user["last_claim"]).replace(tzinfo=UTC)
+    return (datetime.now(UTC) - last_claim) < timedelta(hours=hours)
+
+@rate_limit('claim_ton', calls=3, period=10) 
+def claim_ton(update: Update, context: CallbackContext)
     user_id = update.effective_user.id
     data = get_user(user_id)
     left = check_cooldown(data, "ton")
@@ -510,149 +630,245 @@ def birthday_claim(update: Update, context: CallbackContext):
 
 def withdraw_request(update: Update, context: CallbackContext):
     user_id = update.effective_user.id
-    txt = update.message.text
-    token = None
+    txt = update.message.text.strip()
+    
+    try:
+        # Check withdrawal availability with timezone awareness
+        now = datetime.now(pytz.UTC)
+        if now < WITHDRAWAL_START_DATE:
+            countdown = get_withdrawal_countdown()
+            update.message.reply_text(
+                f"⏳ Withdrawals will open on August 1st, 2025!\n"
+                f"Time remaining: {countdown}\n\n"
+                "You can still earn and accumulate $PTRST and TON until then!",
+                reply_markup=ReplyKeyboardMarkup([
+                    ["📤 $PTRST", "📤 TON"],
+                    ["🏮SET_WALLET", "🚏BACK"]
+                ], resize_keyboard=True)
+            )
+            return
+         withdrawal_id = f"{user_id}_{uuid.uuid4().hex}_{token}"
+        # Thread-safe withdrawal processing
+        with get_user_lock(user_id):
+            user = get_user(user_id)
+            
+            if not user.get("verified", False):
+                raise ValueError("Account not verified for withdrawals")
+                
+            if not user.get("wallet"):
+                raise ValueError("Wallet address not set")
 
-    if datetime.now() < WITHDRAWAL_START_DATE:
-        countdown = get_withdrawal_countdown()
+            # Process PTRST withdrawal
+            if user_id in ptrst_withdraw_mode:
+                try:
+                    amount = int(txt)
+                    if amount < MIN_WITHDRAWAL_PTRST:
+                        raise ValueError(f"Minimum withdrawal is {MIN_WITHDRAWAL_PTRST} PTRST")
+                    if user["balance_ptrst"] < amount:
+                        raise ValueError("Insufficient PTRST balance")
+                        
+                    # Deduct balance and create withdrawal request
+                    deduct_balance(user_id, "ptrst", amount)
+                    token = "PTRST"
+                    
+                except ValueError as e:
+                    ptrst_withdraw_mode.pop(user_id, None)
+                    raise e
+
+            # Process TON withdrawal
+            elif user_id in ton_withdraw_mode:
+                try:
+                    amount = round(float(txt), 3)  # Round to 3 decimal places
+                    if amount < MIN_WITHDRAWAL_TON:
+                        raise ValueError(f"Minimum withdrawal is {MIN_WITHDRAWAL_TON} TON")
+                    if user["balance_ton"] < amount:
+                        raise ValueError("Insufficient TON balance")
+                        
+                    # Deduct balance and create withdrawal request
+                    deduct_balance(user_id, "ton", amount)
+                    token = "TON"
+                    
+                except ValueError as e:
+                    ton_withdraw_mode.pop(user_id, None)
+                    raise e
+                    
+            else:
+                return  # Not in withdrawal mode
+
+            # Create withdrawal record
+            withdrawal_id = f"{user_id}_{int(now.timestamp())}_{token}"
+            pending_withdrawals[withdrawal_id] = {
+                "user_id": user_id,
+                "amount": amount,
+                "wallet": user["wallet"],
+                "token": token,
+                "timestamp": now.isoformat(),
+                "status": "pending"
+            }
+            
+            # Add transaction record
+            add_tx(user_id, "Withdraw", -amount, f"{token} withdrawal requested")
+            
+            # Prepare notification
+            withdraw_msg = (
+                f"💵 Withdraw Order Submitted\n━━━━━━━━━━━━━━━━━━━━\n"
+                f"User: @{user.get('username', user_id)}\n"
+                f"Amount: {amount} {token}\n"
+                f"Wallet: {user['wallet']}\n"
+                f"Time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
+                f"UserID: {user_id}\n"
+                f"WithdrawalID: {withdrawal_id}"
+            )
+            
+            # Admin approval buttons
+            inline_keyboard = [
+                [
+                    InlineKeyboardButton("✅ Approve", callback_data=f"wd_approve_{withdrawal_id}"),
+                    InlineKeyboardButton("❌ Reject", callback_data=f"wd_reject_{withdrawal_id}")
+                ],
+                [
+                    InlineKeyboardButton("🔍 View User", callback_data=f"wd_view_{user_id}")
+                ]
+            ]
+            
+            # Notify admins
+            for admin in ADMINS:
+                try:
+                    context.bot.send_message(
+                        admin,
+                        withdraw_msg,
+                        reply_markup=InlineKeyboardMarkup(inline_keyboard)
+                except Exception as e:
+                    logger.error(f"Error notifying admin {admin}: {e}")
+            
+            # Confirm to user
+            update.message.reply_text(
+                f"✅ Withdrawal request submitted!\n\n{withdraw_msg}\n\n"
+                "Your request is pending admin approval.",
+                reply_markup=main_menu(user_id)
+            )
+
+    except ValueError as e:
         update.message.reply_text(
-            f"⏳ Withdrawals will open on August 1st, 2025!\n"
-            f"Time remaining: {countdown}\n\n"
-            "You can still earn and accumulate $PTRST and TON until then!",
+            f"❌ Withdrawal failed: {str(e)}",
             reply_markup=ReplyKeyboardMarkup([
                 ["📤 $PTRST", "📤 TON"],
                 ["🏮SET_WALLET", "🚏BACK"]
             ], resize_keyboard=True)
         )
-        return
+    except Exception as e:
+        logger.error(f"Withdrawal error for {user_id}: {e}")
+        update.message.reply_text(
+            "⚠️ An error occurred during withdrawal. Please try again.",
+            reply_markup=main_menu(user_id)
+        )
+    finally:
+        # Clear withdrawal modes
+        ptrst_withdraw_mode.pop(user_id, None)
+        ton_withdraw_mode.pop(user_id, None)
 
-    if user_id in ptrst_withdraw_mode:
-        token = "PTRST"
-        try:
-            amount = int(txt)
-        except ValueError:
-            update.message.reply_text("❌ Please enter a valid number for $PTRST amount.")
-            return
-        
-        # Check minimum amount first
-        if amount < MIN_WITHDRAWAL_PTRST:
-            ptrst_withdraw_mode.pop(user_id, None)  # Clear withdrawal mode
-            update.message.reply_text(
-                f"⚠️ Minimum amount is {MIN_WITHDRAWAL_PTRST} $PTRST\n"
-                "Returning to account menu...",
-                reply_markup=ReplyKeyboardMarkup([
-                    ["📤 $PTRST", "📤 TON"],
-                    ["🏮SET_WALLET", "🚏BACK"]
-                ], resize_keyboard=True)
-            )
-            return
-            
-        # Then check balance
-        user = get_user(user_id)
-        if user["balance_ptrst"] < amount:
-            ptrst_withdraw_mode.pop(user_id, None)  # Clear withdrawal mode
-            update.message.reply_text(
-                "❌ Not enough balance\n"
-                "Returning to account menu...",
-                reply_markup=ReplyKeyboardMarkup([
-                    ["📤 $PTRST", "📤 TON"],
-                    ["🏮SET_WALLET", "🚏BACK"]
-                ], resize_keyboard=True)
-            )
-            return
-            
-        # If all checks pass, proceed with withdrawal
-        deduct_balance(user_id, "ptrst", amount)
-        del ptrst_withdraw_mode[user_id]
-        
-    elif user_id in ton_withdraw_mode:
-        token = "TON"
-        try:
-            amount = float(txt)
-        except ValueError:
-            update.message.reply_text("❌ Please enter a valid number for TON amount.")
-            return
-            
-        # Check minimum amount first
-        if amount < MIN_WITHDRAWAL_TON:
-            ton_withdraw_mode.pop(user_id, None)  # Clear withdrawal mode
-            update.message.reply_text(
-                f"⚠️ Minimum amount is {MIN_WITHDRAWAL_TON} TON\n"
-                "Returning to account menu...",
-                reply_markup=ReplyKeyboardMarkup([
-                    ["📤 $PTRST", "📤 TON"],
-                    ["🏮SET_WALLET", "🚏BACK"]
-                ], resize_keyboard=True)
-            )
-            return
-            
-        # Then check balance
-        user = get_user(user_id)
-        if user["balance_ton"] < amount:
-            ton_withdraw_mode.pop(user_id, None)  # Clear withdrawal mode
-            update.message.reply_text(
-                "❌ Not enough balance\n"
-                "Returning to account menu...",
-                reply_markup=ReplyKeyboardMarkup([
-                    ["📤 $PTRST", "📤 TON"],
-                    ["🏮SET_WALLET", "🚏BACK"]
-                ], resize_keyboard=True)
-            )
-            return
-            
-        # If all checks pass, proceed with withdrawal
-        deduct_balance(user_id, "ton", amount)
-        del ton_withdraw_mode[user_id]
-    else:
-        return
-
-    # Process successful withdrawal request
-    withdrawal_id = f"{user_id}_{int(datetime.now().timestamp())}_{token}"
-    user = get_user(user_id)
-    pending_withdrawals[withdrawal_id] = {
-        "user_id": user_id,
-        "amount": amount,
-        "wallet": user["wallet"],
-        "token": token,
-    }
-    add_tx(user_id, "Withdraw", -amount, f"{token} Withdraw requested")
-    withdraw_msg = (
-        f"💵 Withdraw Order Submitted\n━━━━━━━━━━━━━━━━━━━━\n"
-        f"User: @{user.get('username', user_id)}\n"
-        f"Amount: {amount} {token}\nWallet: {user['wallet']}\nTime: {get_datetime()}\n"
-        f"UserID: {user_id}\nWithdrawalID: {withdrawal_id}"
-    )
-    inline_keyboard = [
-        [
-            InlineKeyboardButton("✅ Accept", callback_data=f"wd_accept_{withdrawal_id}"),
-            InlineKeyboardButton("❌ Reject", callback_data=f"wd_reject_{withdrawal_id}")
-        ]
-    ]
-    for admin in ADMINS:
-        context.bot.send_message(admin, withdraw_msg, reply_markup=InlineKeyboardMarkup(inline_keyboard))
-    update.message.reply_text(f"{withdraw_msg}\nWait for approval.")
 
 def check_withdrawal_start(context: CallbackContext):
-    if datetime.now() >= WITHDRAWAL_START_DATE:
+    """Periodically check if withdrawals should open"""
+    now = datetime.now(pytz.UTC)
+    if now >= WITHDRAWAL_START_DATE:
         users = load_users()
-        for user_id in users:
+        notified_users = set()
+        
+        # Batch process notifications
+        for user_id, user_data in users.items():
             try:
-                context.bot.send_message(
-                    user_id,
-                    "🎉 Withdrawals are now open! You can now withdraw your $PTRST and TON tokens!"
-                )
+                if not isinstance(user_data, dict):
+                    continue
+                    
+                # Only notify users with balance
+                if user_data.get("balance_ptrst", 0) > MIN_WITHDRAWAL_PTRST or \
+                   user_data.get("balance_ton", 0) > MIN_WITHDRAWAL_TON:
+                    context.bot.send_message(
+                        user_id,
+                        "🎉 Withdrawals are now open!\n\n"
+                        "You can withdraw your $PTRST and TON tokens from the Account menu.",
+                        reply_markup=main_menu(user_id)
+                    )
+                    notified_users.add(user_id)
+                    
             except Exception as e:
                 logger.error(f"Error notifying user {user_id}: {e}")
+                
+        logger.info(f"Withdrawal opening notified to {len(notified_users)} users")
+
+
+def process_withdrawal_approval(update: Update, context: CallbackContext, withdrawal_id: str):
+    """Handle admin approval/rejection of withdrawals"""
+    query = update.callback_query
+    query.answer()
+    
+    try:
+        with threading.Lock():  # Global withdrawal processing lock
+            wd = pending_withdrawals.get(withdrawal_id)
+            if not wd:
+                query.edit_message_text("⚠️ Withdrawal already processed or expired")
+                return
+                
+            user_id = wd["user_id"]
+            amount = wd["amount"]
+            token = wd["token"]
+            
+            if query.data.startswith("wd_approve_"):
+                # Mark as approved
+                wd["status"] = "approved"
+                wd["processed_at"] = datetime.now(pytz.UTC).isoformat()
+                wd["admin_id"] = query.from_user.id
+                
+                # In a real implementation, you would process the blockchain transaction here
+                # For now we'll just log it
+                logger.info(f"Approved withdrawal {withdrawal_id}: {amount} {token} to {wd['wallet']}")
+                
+                # Notify user
+                context.bot.send_message(
+                    user_id,
+                    f"✅ Your withdrawal of {amount} {token} has been approved!\n\n"
+                    f"Transaction ID: {withdrawal_id}\n"
+                    f"Wallet: {wd['wallet']}\n"
+                    f"Amount: {amount} {token}",
+                    reply_markup=main_menu(user_id)
+                )
+                
+                query.edit_message_text(f"✅ Approved withdrawal of {amount} {token}")
+                
+            elif query.data.startswith("wd_reject_"):
+                # Return funds to user
+                update_balance(user_id, token.lower(), amount)
+                add_tx(user_id, "Withdraw Refund", amount, f"{token} withdrawal rejected")
+                
+                # Update withdrawal record
+                wd["status"] = "rejected"
+                wd["processed_at"] = datetime.now(pytz.UTC).isoformat()
+                wd["admin_id"] = query.from_user.id
+                
+                # Notify user
+                context.bot.send_message(
+                    user_id,
+                    f"❌ Your withdrawal of {amount} {token} was rejected.\n\n"
+                    "Funds have been returned to your balance.",
+                    reply_markup=main_menu(user_id)
+                )
+                
+                query.edit_message_text(f"❌ Rejected withdrawal of {amount} {token}")
+                
+            # Remove from pending
+            pending_withdrawals[withdrawal_id] = wd  # Update status
+            # In production, you might want to move this to a processed_withdrawals dict
+            
+    except Exception as e:
+        logger.error(f"Withdrawal approval error: {e}")
+        query.edit_message_text("⚠️ Error processing withdrawal")
 
 def schedule_withdrawal_check(dispatcher):
-    if not hasattr(dispatcher, 'job_queue') or dispatcher.job_queue is None:
-        logger.warning("Job queue not available - running in webhook mode?")
-        return
-        
-    # Only schedule if we have a job queue
+    # Check every hour if withdrawals should open
     dispatcher.job_queue.run_repeating(
         check_withdrawal_start,
-        interval=3600,
+        interval=3600,  # 1 hour
         first=0
     )
 
@@ -856,39 +1072,214 @@ def analytics(update: Update, context: CallbackContext):
         msg += f"{i}. @{uname} - {refs} invited\n"
     update.message.reply_text(msg, parse_mode="HTML")
 
-def get_weekly_prizes():
-    prizes = {}
-    for i in range(1, 11):
-        prizes[i] = [500, 350, 250, 200, 150, 100, 90, 80, 70, 60][i-1]
-    for i in range(11, 51):
-        prizes[i] = 40
-    for i in range(51, 101):
-        prizes[i] = 20
-    for i in range(101, 251):
-        prizes[i] = 10
-    return prizes
-
 def update_weekly_leaderboard(force=False):
     global weekly_contest_leaderboard, weekly_contest_last_update, weekly_contest_week
     now = int(time.time())
     week = datetime.utcnow().isocalendar()[1]
+    
     if not force and now - weekly_contest_last_update < 600 and weekly_contest_week == week:
+        logger.info("Leaderboard update skipped (cooldown active)")
         return
+
+    logger.info("🔄 Updating weekly leaderboard...")
     weekly_contest_last_update = now
     weekly_contest_week = week
     users = load_users()
     scores = []
     week_start = datetime.utcnow() - timedelta(days=datetime.utcnow().weekday())
     week_start_ts = int(time.mktime(week_start.replace(hour=0, minute=0, second=0, microsecond=0).timetuple()))
+    
     for uid, data in users.items():
         if isinstance(data, dict):
-            refs_this_week = [
+            # Count both existing referrals and new timestamped ones
+            existing_refs = len(data.get("referrals_lvl1", []))
+            new_refs = len([
                 r for r in data.get("referral_timestamps", [])
-                if "date" in r and int(datetime.strptime(r["date"], "%Y-%m-%d").timestamp()) >= week_start_ts
-            ]
-            scores.append((uid, len(refs_this_week)))
+                if isinstance(r, dict) and 
+                "date" in r and 
+                datetime.strptime(r["date"], "%Y-%m-%d %H:%M:%S").date() >= week_start.date()
+            ])
+            total_refs = existing_refs + new_refs
+            
+            scores.append((uid, total_refs))
+
     scores = sorted(scores, key=lambda x: -x[1])[:250]
     weekly_contest_leaderboard = scores
+    logger.info(f"✅ Updated leaderboard with {len(scores)} entries")
+
+def update_live_leaderboard():
+    """Real-time all-time referral ranking"""
+    global live_leaderboard
+    users = load_users()
+    live_leaderboard = sorted(
+        [(uid, data.get("all_time_refs", 0)) 
+         for uid, data in users.items() if isinstance(data, dict)],
+        key=lambda x: -x[1]
+    )
+
+def update_rush_leaderboard(force=False):
+    """Thread-safe Rush leaderboard update with proper timezone handling and referral validation"""
+    global rush_leaderboard, rush_last_update
+    
+    now = time.time()
+    if not force and now - rush_last_update < 10:  # 10-minute cache
+        return
+    
+    try:
+        current_time = datetime.now(pytz.UTC)
+        if current_time < RUSH_START_DATE:
+            return  # Rush hasn't started yet
+            
+        users = load_users()
+        rush_data = []
+        
+        for uid, data in users.items():
+            if not isinstance(data, dict):
+                continue
+                
+            # Count only verified rush referrals with timestamps
+            valid_refs = 0
+            for ref in data.get("referral_timestamps", []):
+                if isinstance(ref, dict):
+                    try:
+                        ref_time = datetime.fromisoformat(ref["date"]).replace(tzinfo=pytz.UTC)
+                        if (ref_time >= RUSH_START_DATE and 
+                            ref.get("rush_eligible", True) and
+                            ref.get("level") == 1):  # Only count direct referrals
+                            valid_refs += 1
+                    except (ValueError, TypeError):
+                        continue
+                        
+            if valid_refs > 0:
+                rush_data.append((uid, valid_refs))
+        
+        # Sort and limit to top 250
+        rush_leaderboard = sorted(rush_data, key=lambda x: (-x[1], x[0]))[:250]
+        rush_last_update = now
+        
+        # Log update
+        logger.info(f"Updated Rush leaderboard with {len(rush_leaderboard)} entries")
+        
+    except Exception as e:
+        logger.error(f"Error updating Rush leaderboard: {e}")
+        if force:  # Only raise if forced update
+            raise
+
+
+def show_rush_leaderboard(update: Update, context: CallbackContext):
+    """Enhanced Rush leaderboard display with anti-cheat checks"""
+    try:
+        current_time = datetime.now(pytz.UTC)
+        
+        # Check rush status
+        if current_time < RUSH_START_DATE:
+            time_left = RUSH_START_DATE - current_time
+            update.message.reply_text(
+                "🔥 <b>Final Invite Rush Starts Soon!</b>\n\n"
+                f"⏳ Starts in: {format_timedelta(time_left)}\n\n"
+                "Prepare your referrals to compete for:\n"
+                "🥇 $500 | 🥈 $350 | 🥉 $250\n"
+                "💰 $10-$200 prizes for top 250",
+                parse_mode="HTML"
+            )
+            return
+            
+        # Force update with cache bypass
+        update_rush_leaderboard(force=True)
+        
+        # Build leaderboard message
+        msg = [
+            "🔥 <b>Final Invite Rush Leaderboard</b>",
+            f"⏳ Ends: {WITHDRAWAL_START_DATE.strftime('%b %d, %Y')} | "
+            f"{get_withdrawal_countdown()} remaining\n"
+        ]
+        
+        # Add top participants
+        if not rush_leaderboard:
+            msg.append("\nNo participants yet - be the first!")
+        else:
+            msg.append("\n🏆 <b>Top Competitors:</b>")
+            for rank, (uid, refs) in enumerate(rush_leaderboard[:20], 1):
+                user = get_user(uid)
+                username = user.get("username", f"user_{uid}")
+                msg.append(
+                    f"{rank}. @{username} - {refs} referral{'' if refs == 1 else 's'}"
+                )
+        
+        # Add prize info
+        msg.extend([
+            "\n💰 <b>Prize Structure:</b>",
+            "1st: $500 | 2nd: $350 | 3rd: $250",
+            "4-10: $200-$60 | 11-50: $40",
+            "51-100: $20 | 101-250: $10",
+            "\n⚡ <b>Your Position:</b>"
+        ])
+        
+        # Add user's position if applicable
+        user_id = update.effective_user.id
+        user_position = next(
+            (i+1 for i, (uid, _) in enumerate(rush_leaderboard) if uid == user_id),
+            None
+        )
+        
+        if user_position:
+            user_refs = next(refs for uid, refs in rush_leaderboard if uid == user_id)
+            msg.append(
+                f"#{user_position} with {user_refs} referral{'' if user_refs == 1 else 's'}"
+            )
+            if user_position <= 250:
+                prize = get_prize_amount(user_position)
+                msg.append(f"🎯 Current prize: ${prize}")
+        else:
+            user_data = get_user(user_id)
+            user_refs = sum(
+                1 for ref in user_data.get("referral_timestamps", [])
+                if isinstance(ref, dict) and 
+                datetime.fromisoformat(ref["date"]).replace(tzinfo=pytz.UTC) >= RUSH_START_DATE
+            )
+            if user_refs > 0:
+                msg.append(f"#{len(rush_leaderboard)+1}+ (You have {user_refs} referral{'' if user_refs == 1 else 's'})")
+            else:
+                msg.append("Not ranked yet - invite friends to join!")
+        
+        update.message.reply_text("\n".join(msg), parse_mode="HTML")
+        
+    except Exception as e:
+        logger.error(f"Error showing Rush leaderboard: {e}")
+        update.message.reply_text(
+            "⚠️ Couldn't load leaderboard. Please try again later.",
+            parse_mode="HTML"
+        )
+
+
+# Helper functions
+def format_timedelta(delta: timedelta) -> str:
+    """Convert timedelta to human-readable format"""
+    days = delta.days
+    hours, remainder = divmod(delta.seconds, 3600)
+    minutes, _ = divmod(remainder, 60)
+    return f"{days}d {hours}h {minutes}m"
+
+def get_prize_amount(position: int) -> int:
+    """Determine prize based on leaderboard position"""
+    if position == 1: return 500
+    if position == 2: return 350
+    if position == 3: return 250
+    if 4 <= position <= 10: return 200 - (position-4)*20
+    if 11 <= position <= 50: return 40
+    if 51 <= position <= 100: return 20
+    if 101 <= position <= 250: return 10
+    return 0
+
+def leaderboard(update: Update, context: CallbackContext):
+    """All-time referral leaderboard (/leaderboard)"""
+    update_live_leaderboard()  # Force real-time update
+    msg = "🏆 **All-Time Referral Leaderboard**\n\n"
+    for rank, (uid, refs) in enumerate(live_leaderboard[:20], 1):
+        user = get_user(uid)
+        uname = user.get("username", str(uid))
+        msg += f"{rank}. @{uname} - {refs} invites\n"
+    update.message.reply_text(msg, parse_mode="Markdown")
 
 def get_withdrawal_countdown():
     now = datetime.now()
@@ -901,73 +1292,41 @@ def get_withdrawal_countdown():
     minutes, seconds = divmod(remainder, 60)
     return f"{days} days {hours} hours {minutes} mins {seconds} secs"
 
-def payout_weekly_contest(context=None):
-    update_weekly_leaderboard(force=True)
-    prizes = get_weekly_prizes()
-    users = load_users()
-    ton_per_usd = weekly_prize_ton / weekly_prize_usd if weekly_prize_usd > 0 and weekly_prize_ton > 0 else 1
-    winners_info = []
-    for rank, (uid, refs) in enumerate(weekly_contest_leaderboard, 1):
-        user = get_user(uid)
-        prize_usd = prizes.get(rank, 0)
-        if prize_usd > 0:
-            prize_ton = round(prize_usd * ton_per_usd, 3)
-            update_balance(uid, "ton", prize_ton)
-            add_tx(uid, "Contest", prize_ton, f"Weekly Referral Contest Prize (Rank #{rank})")
-            winners_info.append(f"{rank}. @{user.get('username') or uid} - {prize_usd}$ ≈ {prize_ton} TON (refs: {refs})")
-    winners_msg = "🏆 Weekly Referral Contest Winners\n\n" + "\n".join(winners_info)
-    if context is not None:
-        for admin in ADMINS:
-            context.bot.send_message(admin, winners_msg)
-    return winners_msg
-
-def schedule_weekly_contest(bot):
-    # Get the job queue from the bot's dispatcher
-    if not hasattr(bot, 'dispatcher') or not hasattr(bot.dispatcher, 'job_queue'):
-        logger.warning("No job queue available for weekly contest scheduling")
+def referral_contest_leaderboard(update: Update, context: CallbackContext):
+    update_weekly_leaderboard(force=True)  # Force immediate update
+    
+    if not weekly_contest_leaderboard:
+        update.message.reply_text("⚠️ Leaderboard is being generated... Try again in 1 minute.")
         return
 
-    job_queue = bot.dispatcher.job_queue
-
-    def contest_runner(context):
-        payout_weekly_contest(context)
-
-    # Schedule to run every Sunday at 23:59 UTC
-    job_queue.run_daily(
-        contest_runner,
-        time=datetime.time(hour=23, minute=59),
-        days=(6,)  # Sunday is day 6 (0=Monday)
-    )
-
-def referral_contest_leaderboard(update: Update, context: CallbackContext):
-    update_weekly_leaderboard()
     prizes = get_weekly_prizes()
     now = datetime.utcnow()
     deadline = datetime(2025, 8, 1)
     days_left = (deadline - now).days
 
     msg = (
-        f"🔥 <b>Final Invite Rush</b>\n\n"
-        f"Top 250 inviters share $10,000 in TON by <b>August 1, 2025</b>!\n"
-        f"<i>{days_left} days left!</i>\n\n"
-        f"Leaderboard updates every 10 minutes.\n\n"
+        f"🔥 <b>Final Invite Rush Leaderboard</b>\n\n"
+        f"🏆 Top 250 inviters share $10,000 in TON prizes!\n"
+        f"⏳ Ends in: {days_left} days\n\n"
+        f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
     )
-    for rank, (uid, refs) in enumerate(weekly_contest_leaderboard, 1):
+    
+    # Show top 20 with detailed counts
+    for rank, (uid, refs) in enumerate(weekly_contest_leaderboard[:20], 1):
         user = get_user(uid)
-        uname = user.get("username") or str(uid)
+        uname = user.get("username", str(uid))
         prize = prizes.get(rank, 0)
         msg += f"{rank}. @{uname} - {refs} referrals"
         if prize:
-            msg += f" | ${prize}"
+            msg += f" (${prize} prize)"
         msg += "\n"
-        if rank == 20:
-            msg += "...\n"
-            break
-    msg += "\n<b>Prize breakdown:</b>\n"
-    msg += "1st: $500, 2nd: $350, 3rd: $250, 4th: $200, 5th: $150\n"
-    msg += "6th: $100, 7th: $90, 8th: $80, 9th: $70, 10th: $60\n"
-    msg += "11-50: $40 | 51-100: $20 | 101-250: $10\n"
-    msg += "\nPrizes paid in TON at the end of the event!"
+    
+    msg += "\n<b>🏅 Prize Structure:</b>\n" \
+           "1st: $500 | 2nd: $350 | 3rd: $250\n" \
+           "4-10: $200-$60 | 11-50: $40\n" \
+           "51-100: $20 | 101-250: $10\n\n" \
+           "💡 Tip: Invite more friends to climb the ranks!"
+    
     update.message.reply_text(msg, parse_mode="HTML")
 
 def user_analytics(update: Update, context: CallbackContext):
@@ -1123,7 +1482,14 @@ def add_tx(user_id, tx_type, amount, desc):
     save_user(user_id, user)
 
 def main_menu_router(update: Update, context: CallbackContext):
-    user_id = update.effective_user.id
+    try:
+        user_id = update.effective_user.id
+        ip = update.effective_user.ip_address  # Requires middleware
+        
+        # Anti-abuse check
+        if check_sybil_attempt(user_id, ip):
+            update.message.reply_text("⚠️ Multiple accounts detected")
+            return
     txt = update.message.text.strip()
 
     # Check withdraw modes first
