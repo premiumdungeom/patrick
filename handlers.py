@@ -647,7 +647,8 @@ def withdraw_request(update: Update, context: CallbackContext):
                 ], resize_keyboard=True)
             )
             return
-         withdrawal_id = f"{user_id}_{uuid.uuid4().hex}_{token}"
+            
+        withdrawal_id = f"{user_id}_{uuid.uuid4().hex}_{token}"
         # Thread-safe withdrawal processing
         with get_user_lock(user_id):
             user = get_user(user_id)
